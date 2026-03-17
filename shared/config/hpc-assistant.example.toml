@@ -1,0 +1,25 @@
+[backend]
+host = "127.0.0.1"
+port = 8765
+
+[model]
+provider = "openai-compatible"
+base_url = "https://api.example.invalid/v1"
+model = "gpt-4.1-mini"
+api_key_env = "OPENAI_API_KEY"
+# api_key = "replace-me-if-you-want-to-store-a-token-inline"
+
+[memory]
+thread_store = "~/.local/share/hpc-assistant/threads"
+long_term_store = "~/.local/share/hpc-assistant/memory"
+
+[tools]
+approval_required = true
+command_timeout_seconds = 15.0
+filesystem_roots = ["~"]
+
+[runtime]
+assistant_id = "hpc-assistant"
+default_user_id = "local-user"
+timeout_seconds = 60.0
+debug = false
