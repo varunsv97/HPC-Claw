@@ -1,25 +1,24 @@
+# Legacy reference file for the first cluster-testing prototype.
+#
+# The current backend reads environment variables through `AssistantSettings`
+# rather than parsing this file directly. Keep this file as operator-facing
+# documentation for the recommended environment variable values.
+
 [backend]
-host = "127.0.0.1"
-port = 8765
+package = "hpc-assistant-backend"
+store_path = "~/.hpcassist"
 
-[model]
-provider = "openai-compatible"
-base_url = "https://api.example.invalid/v1"
-model = "gpt-4.1-mini"
-api_key_env = "OPENAI_API_KEY"
-# api_key = "replace-me-if-you-want-to-store-a-token-inline"
+[openai]
+api_key_env = "HPC_ASSISTANT_OPENAI_API_KEY"
+base_url_env = "HPC_ASSISTANT_OPENAI_BASE_URL"
+model_env = "HPC_ASSISTANT_OPENAI_MODEL"
+default_model = "gpt-5"
 
-[memory]
-thread_store = "~/.local/share/hpc-assistant/threads"
-long_term_store = "~/.local/share/hpc-assistant/memory"
-
-[tools]
-approval_required = true
+[cluster]
 command_timeout_seconds = 15.0
-filesystem_roots = ["~"]
+allow_cluster_probe_jobs = false
+guardrails_enabled = true
 
-[runtime]
-assistant_id = "hpc-assistant"
-default_user_id = "local-user"
-timeout_seconds = 60.0
-debug = false
+[filesystem]
+roots_env = "HPC_ASSISTANT_FILESYSTEM_ROOTS"
+roots_json_example = "[\"~\", \"~/scratch\"]"

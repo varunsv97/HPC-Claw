@@ -9,3 +9,7 @@ tui/src/*.egg-info/
 target/
 .venv-ft/
 .intent/
+.env
+.tmp-home/
+.opencode/
+

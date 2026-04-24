@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<topology version="2.0">
+  <object type="Machine" total_memory="137438953472" depth="0" logical_index="0">
+    <object type="Package" depth="1" logical_index="0">
+      <object type="L3Cache" cache_size="25165824" depth="2" logical_index="0" cache_type="Unified" cache_linesize="64" cache_associativity="0" cache_ways="0">
+        <object type="L2Cache" cache_size="1048576" depth="3" logical_index="0" cache_type="Unified" cache_linesize="64" cache_associativity="16" cache_ways="0">
+          <object type="L1Cache" cache_size="32768" depth="4" logical_index="0" cache_type="Data" cache_linesize="64" cache_associativity="8" cache_ways="0">
+            <object type="Core" depth="5" logical_index="0">
+              <object type="PU" depth="6" logical_index="0" os_index="0"/>
+              <object type="PU" depth="6" logical_index="1" os_index="16"/>
+            </object>
+          </object>
+        </object>
+        <object type="L2Cache" cache_size="1048576" depth="3" logical_index="1" cache_type="Unified" cache_linesize="64" cache_associativity="16" cache_ways="0">
+          <object type="L1Cache" cache_size="32768" depth="4" logical_index="1" cache_type="Data" cache_linesize="64" cache_associativity="8" cache_ways="0">
+            <object type="Core" depth="5" logical_index="1">
+              <object type="PU" depth="6" logical_index="2" os_index="1"/>
+              <object type="PU" depth="6" logical_index="3" os_index="17"/>
+            </object>
+          </object>
+        </object>
+      </object>
+    </object>
+    <object type="Package" depth="1" logical_index="1">
+      <object type="L3Cache" cache_size="25165824" depth="2" logical_index="1" cache_type="Unified" cache_linesize="64" cache_associativity="0" cache_ways="0">
+        <object type="L2Cache" cache_size="1048576" depth="3" logical_index="2" cache_type="Unified" cache_linesize="64" cache_associativity="16" cache_ways="0">
+          <object type="L1Cache" cache_size="32768" depth="4" logical_index="2" cache_type="Data" cache_linesize="64" cache_associativity="8" cache_ways="0">
+            <object type="Core" depth="5" logical_index="2">
+              <object type="PU" depth="6" logical_index="4" os_index="2"/>
+              <object type="PU" depth="6" logical_index="5" os_index="18"/>
+            </object>
+          </object>
+        </object>
+        <object type="L2Cache" cache_size="1048576" depth="3" logical_index="3" cache_type="Unified" cache_linesize="64" cache_associativity="16" cache_ways="0">
+          <object type="L1Cache" cache_size="32768" depth="4" logical_index="3" cache_type="Data" cache_linesize="64" cache_associativity="8" cache_ways="0">
+            <object type="Core" depth="5" logical_index="3">
+              <object type="PU" depth="6" logical_index="6" os_index="3"/>
+              <object type="PU" depth="6" logical_index="7" os_index="19"/>
+            </object>
+          </object>
+        </object>
+      </object>
+    </object>
+    <object type="NUMANode" total_memory="68719476736" depth="2" logical_index="0"/>
+    <object type="NUMANode" total_memory="68719476736" depth="2" logical_index="1"/>
+  </object>
+</topology>

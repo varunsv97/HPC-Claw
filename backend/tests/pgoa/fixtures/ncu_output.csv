@@ -1,0 +1,12 @@
+==PROF== Connected to process 12345 (/path/to/app)
+==PROF== Profiling "vectorAdd" - 0: 0%....50%....100% - 18 passes
+==PROF== Profiling "matMul" - 1: 0%....50%....100% - 18 passes
+"ID","Process ID","Process Name","Host Name","Kernel Name","Kernel Time","Context","Stream","Section Name","Metric Name","Metric Unit","Metric Value"
+"0","12345","app","/host","vectorAdd","2023-Jun-01 12:00:00","1","7","GPU Speed Of Light Throughput","sm__throughput.avg.pct_of_peak_sustained_elapsed","pct_of_peak_sustained_elapsed","72.45"
+"0","12345","app","/host","vectorAdd","2023-Jun-01 12:00:00","1","7","Memory Workload Analysis","dram__bytes.sum.per_second","Gbyte/second","385.2"
+"0","12345","app","/host","vectorAdd","2023-Jun-01 12:00:00","1","7","Compute Workload Analysis","smsp__warps_active.avg.pct_of_peak_sustained_active","pct_of_peak_sustained_active","35.2"
+"0","12345","app","/host","vectorAdd","2023-Jun-01 12:00:00","1","7","GPU Speed Of Light Throughput","Duration","nsecond","45000"
+"1","12345","app","/host","matMul","2023-Jun-01 12:00:01","1","7","GPU Speed Of Light Throughput","sm__throughput.avg.pct_of_peak_sustained_elapsed","pct_of_peak_sustained_elapsed","88.1"
+"1","12345","app","/host","matMul","2023-Jun-01 12:00:01","1","7","Memory Workload Analysis","dram__bytes.sum.per_second","Gbyte/second","120.5"
+"1","12345","app","/host","matMul","2023-Jun-01 12:00:01","1","7","Compute Workload Analysis","smsp__warps_active.avg.pct_of_peak_sustained_active","pct_of_peak_sustained_active","82.5"
+"1","12345","app","/host","matMul","2023-Jun-01 12:00:01","1","7","GPU Speed Of Light Throughput","Duration","nsecond","180000"

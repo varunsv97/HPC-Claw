@@ -1,41 +1,14 @@
 """Public package surface for the HPC assistant backend."""
 
 from hpc_assistant_backend.cli import main
-from hpc_assistant_backend.config import (
-    AssistantSettings,
-    BackendConfig,
-    ExecutionPolicy,
-    default_config_path,
-    load_config,
-    load_settings,
-    render_config,
-    write_config,
-)
-from hpc_assistant_backend.runtime import (
-    AgentTurnResult,
-    AssistantRuntime,
-    AssistantSession,
-    PendingInterrupt,
-    TurnStatus,
-)
-from hpc_assistant_backend.tools import ToolRegistry, ToolSpec, build_default_registry
+from hpc_assistant_backend.config import AssistantSettings, load_settings
+from hpc_assistant_backend.opencode_tools import execute_tool, sync_opencode_project, tool_manifest
 
 __all__ = [
-    "AgentTurnResult",
-    "AssistantRuntime",
-    "AssistantSession",
     "AssistantSettings",
-    "BackendConfig",
-    "ExecutionPolicy",
-    "PendingInterrupt",
-    "ToolRegistry",
-    "ToolSpec",
-    "TurnStatus",
-    "build_default_registry",
-    "default_config_path",
-    "load_config",
+    "execute_tool",
     "load_settings",
     "main",
-    "render_config",
-    "write_config",
+    "sync_opencode_project",
+    "tool_manifest",
 ]
