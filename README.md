@@ -1,127 +1,108 @@
 # hpc-assistant
 
-`hpc-assistant` is a Python 3.14 HPC assistant with two local pieces:
+> Status: This project is under active development and is not production-ready yet.
 
-- a Python backend that talks to an OpenAI-compatible chat endpoint, calls
-  cluster tools, and pauses mutating actions for approval
-- a Textual TUI that gives you chat, approvals, a file explorer, and a code
-  editor in one terminal UI
+`hpc-assistant` is evolving into a cluster-side HPC AI assistant. The current
+prototype focuses on safe discovery and testability:
 
-The repo now targets a real cluster-user workflow rather than a placeholder
-demo service.
+- cluster discovery from the login node
+- module/software environment discovery
+- optional guardrailed probe jobs for real compute-node topology
+- OpenCode tool shims as an add-on execution surface
+- a lightweight Rust TUI for operator testing
 
-## What It Can Do
+The first prototype intentionally keeps the dependency footprint small. The
+backend uses the OpenAI Python SDK where model access is needed, but it does
+not pull in larger agent stacks such as LangChain, DSPy, or PydanticAI yet,
+because the current discovery/testing workflow does not need them.
 
-- inspect Slurm queue and job state
-- inspect module availability and active modules
-- browse allowed filesystem roots
-- open and edit files from the TUI
-- require approval before mutating tool calls like `scancel`, `module load`,
-  or filesystem removal
-- connect to any OpenAI-compatible endpoint by URL, model, and token
+## Prototype Commands
 
-## Python Target
+After installing the backend package, these commands are the primary operator
+entry points:
 
-Both packages target Python `3.14`:
+- `hpc-assistant-backend doctor`
+- `hpc-assistant-backend discover-cluster`
+- `hpc-assistant-backend discover-env`
+- `hpc-assistant-backend probe-cluster --partition <name> --yes`
 
-- `backend/pyproject.toml`
-- `tui/pyproject.toml`
+OpenCode support is still available:
 
-The repo launcher uses `.venv/bin/python` when available and exports
-`PYTHON_GIL=1` by default for compatibility.
+- `hpc-assistant-backend show-opencode-tools`
+- `hpc-assistant-backend sync-opencode-tools`
 
 ## Install
 
-Inside the project venv:
+Python backend:
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e backend -e tui
+python -m pip install -e backend
 ```
 
-## Initialize For A Cluster User
-
-Create a user config with your OpenAI-compatible endpoint and token:
+Rust TUI:
 
 ```bash
-PYTHONPATH=backend/src .venv/bin/python -m hpc_assistant_backend \
-  --config ~/.config/hpc-assistant/config.toml \
-  init \
-  --base-url https://api.example.com/v1 \
-  --model gpt-4.1-mini \
-  --api-key 'replace-me' \
-  --filesystem-root ~ \
-  --filesystem-root ~/scratch \
-  --force
+cargo build --manifest-path tui/Cargo.toml
 ```
 
-Useful flags:
-
-- `--api-key-env OPENAI_API_KEY` keeps an env-var fallback in the config
-- `--no-approval-required` disables review gates for mutating tool calls
-- `--thread-store` and `--long-term-store` move backend data under a custom path
-
-## Run
-
-Use the repo launcher:
+Environment example:
 
 ```bash
-.venv/bin/python scripts/dev.py backend
-.venv/bin/python scripts/dev.py tui
-.venv/bin/python scripts/dev.py app
+cp .env.example .env
 ```
 
-Or run the pieces directly:
+Edit `.env` to set at least:
+
+- `HPC_ASSISTANT_FILESYSTEM_ROOTS`
+- `HPC_ASSISTANT_PGOA_STORE_PATH` (defaults to `~/.hpcassist`)
+- `HPC_ASSISTANT_OPENAI_API_KEY` if you want to exercise model-backed features
+
+## Test Run On A Cluster
+
+Start with the read-only checks:
 
 ```bash
-PYTHONPATH=backend/src .venv/bin/python -m hpc_assistant_backend serve
-PYTHONPATH=tui/src .venv/bin/python -m hpc_assistant_tui --backend-url http://127.0.0.1:8765
+make prototype-doctor
+make prototype-cluster
+make prototype-env
 ```
 
-## Backend Surface
+If those look correct and you explicitly want compute-node topology, run:
 
-HTTP endpoints:
+```bash
+PYTHONPATH=backend/src .venv/bin/python -m hpc_assistant_backend probe-cluster --partition <partition> --yes
+```
 
-- `GET /healthz`
-- `GET /session-info`
-- `POST /api/session`
-- `GET /api/session/{session_id}`
-- `POST /api/session/{session_id}/prompt`
-- `POST /api/session/{session_id}/approvals/{approval_id}`
-- `GET /api/files?path=...`
-- `GET /api/file?path=...`
-- `POST /api/file`
+The Rust TUI is a thin wrapper over the same commands:
 
-CLI commands:
+```bash
+make tui-run
+```
 
-- `show-config`
-- `show-tools`
-- `serve`
-- `invoke`
-- `stdio`
-- `init`
+Hotkeys:
 
-## TUI Notes
+- `1` doctor
+- `2` cluster
+- `3` environment
+- `r` refresh current panel
+- `q` quit
 
-The TUI keeps backend calls off the UI thread with worker threads. It also
-persists local UI state so it can restore the last open session and editor
-buffer metadata on restart.
+## Guardrails
 
-Current workspace panes:
+The prototype is conservative by default:
 
-- chat conversation
-- tool activity
-- approval review
-- file explorer
-- code editor
-- backend status
+- filesystem writes are limited to configured roots
+- cluster probe jobs are disabled unless explicitly enabled
+- OpenCode remains an add-on tool surface, not the core orchestration layer
+- the experimental PGOA loop does not submit or cancel jobs on its own
 
 ## Verification
 
 ```bash
 make test
-PYTHON_GIL=1 .venv/bin/python scripts/dev.py --help
-PYTHONPATH=backend/src .venv/bin/python -m hpc_assistant_backend init --help
+python3 -m py_compile backend/src/hpc_assistant_backend/*.py
+python3 -m py_compile backend/src/hpc_assistant_backend/pgoa/*.py
 ```
