@@ -19,6 +19,7 @@ frameworks unless they provide clear operational value.
 Once installed, the package exposes:
 
 ```bash
+hpc-assistant-backend assist --repo .
 hpc-assistant-backend doctor
 hpc-assistant-backend discover-cluster
 hpc-assistant-backend discover-env
@@ -37,3 +38,8 @@ Experimental:
 ```bash
 hpc-assistant-backend run-pgoa --workload-id <id> --job-script-path <path> --primary-kpi elapsed_s --kpi-unit seconds
 ```
+
+`assist` is the repo-aware control plane entrypoint. It persists a session under
+`~/.hpcassist`, reports how work should be routed between OpenCode and the
+backend, and keeps PGOA as a skill inside the larger assistant instead of a
+separate product flow.

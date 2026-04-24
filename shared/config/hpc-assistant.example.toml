@@ -22,3 +22,11 @@ guardrails_enabled = true
 [filesystem]
 roots_env = "HPC_ASSISTANT_FILESYSTEM_ROOTS"
 roots_json_example = "[\"~\", \"~/scratch\"]"
+
+# Files matching these glob patterns are write-protected at the backend level.
+# Patterns are matched against relative paths inside each filesystem root and
+# against full absolute paths.  Standard Unix shell globs are supported.
+# Set via env var:  HPC_ASSISTANT_READONLY_PATHS='["Makefile","src/generated/**","*.lock"]'
+# Or in the repo-local opencode.json:  "readonly_paths": ["Makefile", "*.lock"]
+readonly_paths_env = "HPC_ASSISTANT_READONLY_PATHS"
+readonly_paths_json_example = "[\"Makefile\", \"*.lock\", \"src/generated/**\"]"

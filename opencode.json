@@ -1,14 +1,8 @@
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://opencode.ai/config.schema.json",
   "permission": {
     "bash": "ask",
-    "slurm_cancel_job": "ask",
-    "module_load": "ask",
-    "module_unload": "ask",
-    "module_swap": "ask",
-    "module_purge": "ask",
-    "module_use": "ask",
-    "module_unuse": "ask",
-    "filesystem_remove": "ask"
-  }
+    "pgoa_apply_binding": "ask"
+  },
+  "readonly_paths": []
 }

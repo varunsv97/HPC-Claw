@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 from dataclasses import dataclass
 from datetime import datetime, UTC
 from pathlib import Path
@@ -53,6 +54,66 @@ def resolve_allowed_path(path: str, settings: AssistantSettings) -> Path:
             return candidate
     allowed = ", ".join(str(root) for root in configured_filesystem_roots(settings))
     raise ValueError(f"path {candidate} is outside approved filesystem roots: {allowed}")
+
+
+def is_readonly(path: Path, settings: AssistantSettings) -> bool:
+    """Return True if *path* matches any readonly_paths pattern.
+
+    Each pattern is tested against three forms of the path, in order:
+      1. The full absolute path string  (e.g. ``/home/user/project/Makefile``)
+      2. The path relative to each configured filesystem root  (``project/Makefile``)
+      3. Each individual filename segment  (``Makefile``)
+
+    Standard Unix shell glob syntax (``*``, ``**``, ``?``, ``[seq]``) is
+    supported.  Note: ``**`` is treated as a multi-segment wildcard only when
+    it appears as a standalone path component; otherwise ``fnmatch`` handles it
+    as a normal glob.
+
+    Patterns that contain a ``/`` are only matched against forms 1 and 2.
+    Patterns without ``/`` are also matched against each filename segment (form 3),
+    so ``"Makefile"`` protects any file named Makefile at any depth.
+    """
+    if not settings.readonly_paths:
+        return False
+    # Resolve symlinks — /tmp on macOS is a symlink to /private/tmp
+    resolved = path.resolve(strict=False)
+    path_str = str(resolved)
+    roots = configured_filesystem_roots(settings)
+    is_simple = lambda p: "/" not in p  # noqa: E731
+
+    for pattern in settings.readonly_paths:
+        # 1. Full absolute path
+        if fnmatch.fnmatchcase(path_str, pattern):
+            return True
+        # 2. Relative path from each root
+        for root in roots:
+            try:
+                rel = str(resolved.relative_to(root))
+            except ValueError:
+                continue
+            if fnmatch.fnmatchcase(rel, pattern):
+                return True
+        # 3. Simple (no-slash) patterns match any filename segment
+        if is_simple(pattern):
+            for part in resolved.parts:
+                if fnmatch.fnmatchcase(part, pattern):
+                    return True
+    return False
+
+
+def resolve_writable_path(path: str, settings: AssistantSettings) -> Path:
+    """Like resolve_allowed_path but also rejects readonly_paths matches.
+
+    Raises:
+        ValueError — path is outside approved filesystem roots.
+        PermissionError — path matches a readonly_paths pattern.
+    """
+    target = resolve_allowed_path(path, settings)
+    if is_readonly(target, settings):
+        raise PermissionError(
+            f"{target} is protected by a readonly_paths rule and cannot be written"
+        )
+    return target
 
 
 def list_directory(
@@ -124,7 +185,7 @@ def write_text_file(
     *,
     create_parents: bool = True,
 ) -> dict[str, Any]:
-    target = resolve_allowed_path(path, settings)
+    target = resolve_writable_path(path, settings)
     if create_parents:
         target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")

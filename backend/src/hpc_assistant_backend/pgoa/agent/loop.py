@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from typing import Any
 
 from hpc_assistant_backend.config import AssistantSettings, load_settings
@@ -18,7 +19,18 @@ from hpc_assistant_backend.pgoa.cluster_discovery import (
     run_probe_jobs,
     ApprovalCallback,
 )
-from hpc_assistant_backend.pgoa.schema import ClusterProfile, DeltaReport, KPIMetrics, OptimizationResult
+from hpc_assistant_backend.pgoa.dspy_prompts import configure_dspy, get_modules
+from hpc_assistant_backend.pgoa.edit_dispatcher import dispatch_code_edit
+from hpc_assistant_backend.pgoa.schema import (
+    BottleneckReport,
+    ClusterProfile,
+    DeltaReport,
+    EditMapEntry,
+    EditRecord,
+    KPIMetrics,
+    MetricsEditMap,
+    OptimizationResult,
+)
 from hpc_assistant_backend.pgoa.services import (
     analyze_run,
     apply_binding_change,
@@ -30,6 +42,7 @@ from hpc_assistant_backend.pgoa.services import (
     record_slurm_action,
 )
 from hpc_assistant_backend.pgoa.store import ExperimentStore
+from hpc_assistant_backend.project_config import ProjectConfig
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +57,7 @@ class PGOAAgent:
         kpi_threshold_pct: float = 2.0,
         settings: AssistantSettings | None = None,
         probe_approval_callback: ApprovalCallback | None = None,
+        project_config: ProjectConfig | None = None,
     ) -> None:
         self._store = store
         self._client = llm_client
@@ -51,6 +65,19 @@ class PGOAAgent:
         self._max_iterations = max_iterations
         self._kpi_threshold_pct = kpi_threshold_pct
         self._settings = settings or load_settings()
+        self._project_config = project_config
+        # DSPy is configured lazily when a project_config with edit_roots is present
+        self._dspy_ready = False
+        if project_config is not None and project_config.paths.edit_roots:
+            try:
+                configure_dspy(self._settings)
+                self._dspy_ready = True
+            except Exception as exc:
+                log.warning("DSPy configuration failed; code-edit dispatch disabled: %s", exc)
+        # Per-run edit tracking state (reset in run())
+        self._pending_edit: EditRecord | None = None
+        self._pending_edit_expected_pct: float = 0.0
+        self._edit_map: MetricsEditMap | None = None
         self._cluster_profile: ClusterProfile = self._init_cluster_profile(
             probe_approval_callback
         )
@@ -153,6 +180,12 @@ class PGOAAgent:
         convergence_reason = "max_iterations_reached"
         iterations_run = 0
         last_compare_result: dict | None = None
+        last_bottleneck_result: dict | None = None
+
+        # Reset per-run edit-tracking state
+        self._pending_edit = None
+        self._pending_edit_expected_pct = 0.0
+        self._edit_map = MetricsEditMap(workload_id=workload_id)
 
         for iteration in range(self._max_iterations):
             iterations_run = iteration + 1
@@ -196,9 +229,30 @@ class PGOAAgent:
                     }
                 )
 
-                # Track deltas for convergence check
+                # Track results for post-iteration hooks
+                if tool_name == "analyze_bottlenecks" and "primary_bottleneck" in result:
+                    last_bottleneck_result = result
                 if tool_name == "compare_runs" and "kpi_delta_pct" in result:
                     last_compare_result = result
+
+            # Post-iteration: dispatch code edit if bottleneck requires one
+            if last_bottleneck_result is not None:
+                edit_info = self._maybe_dispatch_code_edit(
+                    last_bottleneck_result, workload_id
+                )
+                if edit_info is not None:
+                    # Inject an informational note so the LLM knows an edit was made
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            f"[PGOA] Code edit dispatched (edit_id={edit_info.edit_id}). "
+                            f"Hypothesis: {edit_info.hypothesis} "
+                            f"Files modified: {', '.join(edit_info.files_modified) or 'pending git diff'}. "
+                            "Please ask the user to resubmit the job with the modified code "
+                            "and provide the new job_id when it completes."
+                        ),
+                    })
+                last_bottleneck_result = None
 
             # Convergence check after compare_runs
             if last_compare_result is not None:
@@ -218,6 +272,8 @@ class PGOAAgent:
                     all_deltas.append(delta_report)
                     if direction == "improved" or best_run_id is None:
                         best_run_id = last_compare_result["to_run_id"]
+                    # Link delta to pending code edit if one was dispatched this iteration
+                    self._link_edit_to_delta(delta_report, workload_id)
                 except Exception:
                     pass
 
@@ -246,6 +302,13 @@ class PGOAAgent:
         except Exception:
             total_improvement = 0.0
 
+        # Persist the edit map (even if empty — useful for auditing)
+        if self._edit_map is not None:
+            try:
+                self._store.save_edit_map(workload_id, self._edit_map)
+            except Exception as exc:
+                log.warning("Failed to save edit map: %s", exc)
+
         return OptimizationResult(
             workload_id=workload_id,
             iterations_run=iterations_run,
@@ -254,6 +317,138 @@ class PGOAAgent:
             convergence_reason=convergence_reason,
             all_deltas=all_deltas,
         )
+
+    # ------------------------------------------------------------------
+    # Code-edit dispatch (DSPy + OpenCode)
+    # ------------------------------------------------------------------
+
+    def _maybe_dispatch_code_edit(
+        self, bottleneck_result: dict, workload_id: str
+    ) -> EditRecord | None:
+        """Run DSPy reasoning on a bottleneck result; if a code edit is warranted,
+        build the OpenCode prompt and dispatch it.  Returns the EditRecord or None.
+        """
+        if not self._dspy_ready:
+            return None
+        if self._project_config is None or not self._project_config.paths.edit_roots:
+            return None
+
+        bottleneck_type = bottleneck_result.get("primary_bottleneck", "")
+        if bottleneck_type in ("none_detected", "insufficient_data"):
+            return None
+
+        run_id = bottleneck_result.get("run_id")
+        if not run_id:
+            return None
+
+        try:
+            bundle = self._store.load_bundle(workload_id, run_id)
+        except Exception as exc:
+            log.warning("Cannot load bundle for edit dispatch: %s", exc)
+            return None
+
+        cluster_ctx = _format_cluster_context(self._cluster_profile)
+        hw_ctx = _format_hardware_context(self._cluster_profile)
+        profile_summary = _summarize_bundle(bundle)
+
+        b2h, h2ep, _ = get_modules()
+
+        try:
+            pred = b2h(
+                bottleneck_type=bottleneck_type,
+                bottleneck_details=json.dumps(bottleneck_result.get("details", {})),
+                recommended_hint=bottleneck_result.get("recommended_action_hint", ""),
+                cluster_context=cluster_ctx,
+                profile_summary=profile_summary,
+            )
+        except Exception as exc:
+            log.warning("DSPy BottleneckToHypothesis failed: %s", exc)
+            return None
+
+        if not pred.edit_needed:
+            log.info("DSPy: edit not needed for bottleneck=%s", bottleneck_type)
+            return None
+
+        edit_roots_str = ", ".join(self._project_config.paths.edit_roots)
+        try:
+            pred2 = h2ep(
+                hypothesis=pred.hypothesis,
+                rationale=pred.rationale,
+                bottleneck_type=bottleneck_type,
+                edit_roots=edit_roots_str,
+                hardware_context=hw_ctx,
+            )
+        except Exception as exc:
+            log.warning("DSPy HypothesisToEditPrompt failed: %s", exc)
+            return None
+
+        bottleneck_obj = BottleneckReport(
+            run_id=run_id,
+            primary_bottleneck=bottleneck_type,  # type: ignore[arg-type]
+            details=bottleneck_result.get("details", {}),
+            recommended_action_hint=bottleneck_result.get("recommended_action_hint", ""),
+        )
+
+        # Determine working directory from project config
+        cwd: Path | None = None
+        if self._project_config.project_root is not None:
+            cwd = self._project_config.project_root
+
+        try:
+            edit_record = dispatch_code_edit(
+                hypothesis=pred.hypothesis,
+                opencode_prompt=pred2.opencode_prompt,
+                bottleneck=bottleneck_obj,
+                profile=bundle,
+                project_config=self._project_config,
+                settings=self._settings,
+                cwd=cwd,
+            )
+        except Exception as exc:
+            log.error("dispatch_code_edit failed: %s", exc, exc_info=True)
+            return None
+
+        self._store.save_edit_record(workload_id, edit_record)
+        self._pending_edit = edit_record
+        self._pending_edit_expected_pct = float(getattr(pred, "expected_improvement_pct", 0.0))
+        return edit_record
+
+    def _link_edit_to_delta(self, delta: DeltaReport, workload_id: str) -> None:
+        """Link the pending EditRecord to the measured DeltaReport and run DSPy evaluation."""
+        if self._pending_edit is None or self._edit_map is None:
+            return
+
+        # Update the edit record with the post-edit run_id
+        updated_edit = self._pending_edit.model_copy(
+            update={"linked_run_id_after": delta.to_run_id}
+        )
+        self._store.save_edit_record(workload_id, updated_edit)
+
+        # Run DSPy delta evaluation (best-effort — never blocks the main loop)
+        if self._dspy_ready:
+            _, _, delta_eval = get_modules()
+            try:
+                eval_pred = delta_eval(
+                    delta_json=delta.model_dump_json(),
+                    hypothesis=updated_edit.hypothesis,
+                    bottleneck_type=updated_edit.bottleneck_type,
+                    expected_improvement_pct=self._pending_edit_expected_pct,
+                )
+                log.info(
+                    "Edit %s evaluation: verdict=%s  next=%s  rollback=%s",
+                    updated_edit.edit_id,
+                    eval_pred.verdict,
+                    eval_pred.next_hypothesis[:60] if eval_pred.next_hypothesis else "(none)",
+                    eval_pred.should_rollback,
+                )
+            except Exception as exc:
+                log.debug("DSPy MetricsDeltaEvaluation failed (non-fatal): %s", exc)
+
+        self._edit_map.entries.append(
+            EditMapEntry(edit_id=updated_edit.edit_id, edit=updated_edit, delta=delta)
+        )
+        self._pending_edit = None
+        self._pending_edit_expected_pct = 0.0
 
     # ------------------------------------------------------------------
     # Tool dispatch — calls services.py directly; no intermediate registry
@@ -376,3 +571,72 @@ class PGOAAgent:
                 "secondary_deltas": delta.secondary_deltas,
             }
         return {"error": f"Unknown tool: {tool_name!r}"}
+
+
+# ---------------------------------------------------------------------------
+# Module-level context formatters (used by DSPy dispatch helpers)
+# ---------------------------------------------------------------------------
+
+
+def _format_cluster_context(profile: ClusterProfile | None) -> str:
+    if profile is None:
+        return "(cluster topology not available)"
+    hw = profile.login_node_hardware
+    parts: list[str] = [f"Cluster: {profile.cluster_name}"]
+    if hw.cpu_model:
+        parts.append(f"CPU: {hw.cpu_model}")
+    if hw.gpu_model:
+        parts.append(f"GPU: {hw.gpu_model} ({hw.gpu_memory_gb} GB)")
+    se = profile.software_env
+    if se is not None:
+        if se.compilers:
+            parts.append(
+                "Compilers: " + ", ".join(m.load_cmd for m in se.compilers[:4])
+            )
+        if se.toolchains:
+            parts.append(
+                "Toolchains: " + ", ".join(t.name for t in se.toolchains[:3])
+            )
+    return "\n".join(parts)
+
+
+def _format_hardware_context(profile: ClusterProfile | None) -> str:
+    if profile is None:
+        return "(hardware details not available)"
+    hw = profile.login_node_hardware
+    parts: list[str] = []
+    if hw.cpu_arch:
+        parts.append(f"CPU arch: {hw.cpu_arch}")
+    if hw.cpu_features:
+        parts.append(f"ISA: {', '.join(hw.cpu_features[:6])}")
+    if hw.gpu_model:
+        bw = f", peak mem BW ~{hw.gpu_memory_gb * 80:.0f} GB/s" if hw.gpu_memory_gb else ""
+        parts.append(f"GPU: {hw.gpu_model} ({hw.gpu_compute_capability or '?'}){bw}")
+    if hw.cache_l3_mb:
+        parts.append(f"L3 cache: {hw.cache_l3_mb} MB")
+    return "\n".join(parts) or "(hardware details not available)"
+
+
+def _summarize_bundle(bundle: ProfileBundle) -> str:
+    parts: list[str] = [
+        f"KPI: {bundle.kpi.value} {bundle.kpi.unit} (lower_is_better={bundle.kpi.lower_is_better})"
+    ]
+    if bundle.slurm:
+        s = bundle.slurm
+        parts.append(
+            f"Slurm: elapsed={s.elapsed_s}s  alloc_cpus={s.alloc_cpus}  "
+            f"max_rss={s.max_rss_mb}MB  avg_cpu={s.avg_cpu_pct}%"
+        )
+    if bundle.compute:
+        c = bundle.compute
+        parts.append(
+            f"GPU: roofline={c.roofline_position}  sm_occ={c.sm_occupancy_pct}%  "
+            f"mem_bw_util={c.memory_bw_utilization_pct}%"
+        )
+    if bundle.cpu_perf:
+        cp = bundle.cpu_perf
+        parts.append(
+            f"CPU perf: DRAM_BW={cp.memory_bw_dram_gbs} GB/s  IPC={cp.ipc}  "
+            f"vec_ratio={cp.vectorization_ratio_pct}%"
+        )
+    return "\n".join(parts)

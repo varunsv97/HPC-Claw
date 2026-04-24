@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from hpc_assistant_backend.config import AssistantSettings
-from hpc_assistant_backend.path_access import resolve_allowed_path
+from hpc_assistant_backend.path_access import resolve_allowed_path, resolve_writable_path
 from hpc_assistant_backend.pgoa.actions import (
     apply_slurm_binding,
     validate_slurm_binding_params,
@@ -19,7 +19,11 @@ from hpc_assistant_backend.pgoa.adapters.likwid import LIKWIDAdapter
 from hpc_assistant_backend.pgoa.adapters.ncu import NCUAdapter
 from hpc_assistant_backend.pgoa.adapters.slurm import SlurmAdapter
 from hpc_assistant_backend.pgoa.analysis import analyze_bottlenecks
-from hpc_assistant_backend.pgoa.cluster_discovery import collect_login_node_info, is_stale
+from hpc_assistant_backend.pgoa.cluster_discovery import (
+    collect_login_node_info,
+    detect_cluster_name,
+    is_stale,
+)
 from hpc_assistant_backend.pgoa.schema import (
     ActionProposal,
     ClusterProfile,
@@ -44,14 +48,15 @@ def discover_cluster(
     user approval and must be triggered explicitly via
     ``cluster_discovery.run_probe_jobs()``.
     """
-    fresh = collect_login_node_info(settings)
-    cluster_name = fresh.cluster_name
-
+    # Check cache first — collect_login_node_info runs sinfo + scontrol + module
+    # avail/spider and is expensive; skip all of that when the cache is fresh.
     if not force_refresh:
+        cluster_name = detect_cluster_name(settings)
         cached = store.load_cluster_profile(cluster_name)
         if cached is not None and not is_stale(cached):
             return cached
 
+    fresh = collect_login_node_info(settings)
     store.save_cluster_profile(fresh)
     return fresh
 
@@ -224,7 +229,7 @@ def apply_binding_change(
         exclusive=exclusive,
     )
 
-    output_path = resolve_allowed_path(output_script_path, settings)
+    output_path = resolve_writable_path(output_script_path, settings)
     output_path.write_text(modified, encoding="utf-8")
     store.save_job_script(workload_id, run_id, modified)
     return str(output_path), changes

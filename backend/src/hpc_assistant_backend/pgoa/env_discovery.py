@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Literal
@@ -138,7 +139,7 @@ def _run_bash_module(subcmd: str, settings: AssistantSettings, timeout: float | 
 
     init = _find_lmod_init()
     if init:
-        bash_cmd = f"source {init!r} 2>/dev/null && module {subcmd} 2>&1"
+        bash_cmd = f"source {shlex.quote(init)} 2>/dev/null && module {subcmd} 2>&1"
     elif os.environ.get("LMOD_VERSION"):
         # Module is already a shell function in the parent; bash -l may re-source it
         bash_cmd = f"module {subcmd} 2>&1"
@@ -201,6 +202,20 @@ def _parse_module_list(raw: str) -> list[tuple[str, str, bool]]:
     return results
 
 
+def _version_key(v: str) -> tuple[int | str, ...]:
+    """Sort key that orders version strings numerically where possible.
+
+    "10.0" > "9.0", "4.1.6" > "4.1.5", non-numeric parts sort after numeric.
+    """
+    parts: list[int | str] = []
+    for segment in re.split(r"[.\-_]", v):
+        try:
+            parts.append(int(segment))
+        except ValueError:
+            parts.append(segment)
+    return tuple(parts)
+
+
 def _build_module_map(entries: list[tuple[str, str, bool]]) -> dict[str, ModuleInfo]:
     """Collapse (name, version, is_default) entries into a name → ModuleInfo dict.
 
@@ -220,7 +235,7 @@ def _build_module_map(entries: list[tuple[str, str, bool]]) -> dict[str, ModuleI
 
     result: dict[str, ModuleInfo] = {}
     for key, info in groups.items():
-        versions = sorted(info["versions"])
+        versions = sorted(info["versions"], key=_version_key)
         default = info["default_version"]
         if not default and versions:
             default = versions[-1]  # newest as fallback

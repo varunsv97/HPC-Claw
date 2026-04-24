@@ -254,3 +254,51 @@ class ClusterProfile(BaseModel):
     software_env: SoftwareEnvironment | None = None
     # Raw sinfo output for reference
     raw_sinfo: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Edit tracking — code edits dispatched through OpenCode
+# ---------------------------------------------------------------------------
+
+
+class EditRecord(BaseModel):
+    """A single code edit dispatched to OpenCode by the PGOA agent.
+
+    Created when ``analyze_bottlenecks`` identifies a bottleneck that requires
+    a source-code change (rather than a Slurm-script-only fix).  The record is
+    linked to the ``ProfileBundle.run_id`` that triggered the edit
+    (``linked_run_id_before``) and to the follow-up run that measured the
+    effect (``linked_run_id_after``, filled in after ``compare_runs``).
+    """
+    edit_id: str
+    timestamp: datetime
+    # DSPy-generated hypothesis that motivated this edit
+    hypothesis: str
+    # Primary bottleneck category (from BottleneckReport)
+    bottleneck_type: str
+    # Full OpenCode prompt that was sent
+    prompt_sent_to_opencode: str
+    # OpenCode session ID extracted from CLI output (best-effort)
+    opencode_session_id: str | None = None
+    # Paths modified by OpenCode (from ``git diff --name-only``)
+    files_modified: list[str] = []
+    # Unified diff of all changes (from ``git diff <pre-commit>``)
+    git_diff: str | None = None
+    # Run that triggered this edit
+    linked_run_id_before: str
+    # Run measured after this edit (None until compare_runs completes)
+    linked_run_id_after: str | None = None
+
+
+class EditMapEntry(BaseModel):
+    """Links one :class:`EditRecord` to its measured :class:`DeltaReport`."""
+    edit_id: str
+    edit: EditRecord
+    # None until compare_runs has been called for the post-edit run
+    delta: DeltaReport | None = None
+
+
+class MetricsEditMap(BaseModel):
+    """All edit-delta pairs accumulated during one PGOA optimization run."""
+    workload_id: str
+    entries: list[EditMapEntry] = []

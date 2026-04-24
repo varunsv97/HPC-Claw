@@ -12,6 +12,9 @@ from uuid import uuid4
 from hpc_assistant_backend.pgoa.schema import (
     ClusterProfile,
     DeltaReport,
+    EditMapEntry,
+    EditRecord,
+    MetricsEditMap,
     ProfileBundle,
     RunHandle,
 )
@@ -217,6 +220,59 @@ class ExperimentStore:
         path = self._cluster_path(profile.cluster_name)
         path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write(path, profile.model_dump_json(indent=2))
+
+    def _cluster_path(self, cluster_name: str) -> Path:
+        # Sanitise cluster name to a safe filename
+        safe = re.sub(r"[^\w\-.]", "_", cluster_name)
+        return self._base / "_cluster" / f"{safe}.json"
+
+    # ------------------------------------------------------------------
+    # Edit records — code edits dispatched to OpenCode
+    # ------------------------------------------------------------------
+
+    def save_edit_record(self, workload_id: str, record: EditRecord) -> None:
+        """Persist a single EditRecord to ``<workload_id>/edits/<edit_id>.json``."""
+        edits_dir = self._base / workload_id / "edits"
+        edits_dir.mkdir(parents=True, exist_ok=True)
+        _atomic_write(edits_dir / f"{record.edit_id}.json", record.model_dump_json(indent=2))
+
+    def load_edit_record(self, workload_id: str, edit_id: str) -> EditRecord | None:
+        path = self._base / workload_id / "edits" / f"{edit_id}.json"
+        if not path.exists():
+            return None
+        try:
+            return EditRecord.model_validate_json(path.read_text(encoding="utf-8"))
+        except Exception:
+            log.warning("Failed to load edit record %s", edit_id, exc_info=True)
+            return None
+
+    def list_edit_records(self, workload_id: str) -> list[EditRecord]:
+        edits_dir = self._base / workload_id / "edits"
+        if not edits_dir.exists():
+            return []
+        records: list[EditRecord] = []
+        for p in sorted(edits_dir.glob("*.json")):
+            try:
+                records.append(EditRecord.model_validate_json(p.read_text(encoding="utf-8")))
+            except Exception:
+                log.warning("Skipping malformed edit record %s", p, exc_info=True)
+        return records
+
+    def save_edit_map(self, workload_id: str, edit_map: MetricsEditMap) -> None:
+        """Persist the full MetricsEditMap for a workload (replaces any existing)."""
+        path = self._base / workload_id / "edit_map.json"
+        (self._base / workload_id).mkdir(parents=True, exist_ok=True)
+        _atomic_write(path, edit_map.model_dump_json(indent=2))
+
+    def load_edit_map(self, workload_id: str) -> MetricsEditMap | None:
+        path = self._base / workload_id / "edit_map.json"
+        if not path.exists():
+            return None
+        try:
+            return MetricsEditMap.model_validate_json(path.read_text(encoding="utf-8"))
+        except Exception:
+            log.warning("Failed to load edit map for %s", workload_id, exc_info=True)
+            return None
 
     def _cluster_path(self, cluster_name: str) -> Path:
         # Sanitise cluster name to a safe filename

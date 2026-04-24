@@ -13,6 +13,12 @@ from unittest import mock
 
 from hpc_assistant_backend.cli import main
 from hpc_assistant_backend.config import AssistantSettings
+from hpc_assistant_backend.assistant.schema import (
+    ActionRoute,
+    AssistantSession,
+    OpenCodeWorkspace,
+    RepoContext,
+)
 from hpc_assistant_backend.pgoa.schema import ClusterProfile, HardwareInfo, SoftwareEnvironment
 
 
@@ -161,6 +167,42 @@ class BackendCliTests(unittest.TestCase):
                  mock.patch("hpc_assistant_backend.cli.build_doctor_report", return_value=report), \
                  mock.patch("sys.stdout.write") as stdout_write:
                 exit_code = main(["doctor"])
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(stdout_write.called)
+
+    def test_assist_prints_session_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir()
+            settings = AssistantSettings(
+                filesystem_roots=(tmpdir,),
+                pgoa_store_path=str(Path(tmpdir) / ".hpcassist"),
+            )
+            session = AssistantSession(
+                session_id="coding-test",
+                created_at=datetime.now(tz=timezone.utc),
+                mode="coding",
+                repo=RepoContext(root=str(repo), name="repo", has_git=True),
+                opencode=OpenCodeWorkspace(
+                    repo_root=str(repo),
+                    ready=True,
+                    sync_command="sync",
+                ),
+                store_root=str(Path(tmpdir) / ".hpcassist"),
+                session_path=str(Path(tmpdir) / ".hpcassist" / "assistant" / "sessions" / "coding-test.json"),
+                routes=[
+                    ActionRoute(
+                        action="edit_repo_files",
+                        capability="repo.edit",
+                        target="opencode",
+                        summary="OpenCode owns repo edits.",
+                    )
+                ],
+            )
+            with mock.patch("hpc_assistant_backend.cli.load_settings", return_value=settings), \
+                 mock.patch("hpc_assistant_backend.cli.build_assistant_session", return_value=session), \
+                 mock.patch("sys.stdout.write") as stdout_write:
+                exit_code = main(["assist", "--repo", str(repo), "--goal", "fix build"])
         self.assertEqual(exit_code, 0)
         self.assertTrue(stdout_write.called)
 

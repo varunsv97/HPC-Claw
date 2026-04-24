@@ -1,26 +1,37 @@
 # hpc-assistant
 
-> Status: This project is under active development and is not production-ready yet.
+> Full architecture and component reference: [docs/architecture.md](docs/architecture.md)
 
-`hpc-assistant` is evolving into a cluster-side HPC AI assistant. The current
-prototype focuses on safe discovery and testability:
+`hpc-assistant` is a cluster-side HPC AI optimization harness.  It drives a closed feedback loop over HPC workloads: profile → classify bottleneck → reason with DSPy → edit code or Slurm script via OpenCode → measure delta → iterate until convergence.
 
-- cluster discovery from the login node
-- module/software environment discovery
-- optional guardrailed probe jobs for real compute-node topology
-- OpenCode tool shims as an add-on execution surface
-- a lightweight Rust TUI for operator testing
+### What it does
 
-The first prototype intentionally keeps the dependency footprint small. The
-backend uses the OpenAI Python SDK where model access is needed, but it does
-not pull in larger agent stacks such as LangChain, DSPy, or PydanticAI yet,
-because the current discovery/testing workflow does not need them.
+- **Cluster discovery** — Slurm topology, hardware, and software environment from the login node; hardware details via optional probe jobs
+- **PGOA optimization loop** — `PGOAAgent` orchestrates profiling, bottleneck analysis, and iterative optimization using an OpenAI function-calling loop
+- **Structured reasoning** — DSPy `ChainOfThought` signatures convert bottleneck reports into testable hypotheses, OpenCode edit instructions, and post-edit verdicts
+- **Code editing** — spawns `opencode run <prompt>` for source-level changes; captures git diff for a full audit trail
+- **Edit tracking** — every code edit is linked to its before/after KPI delta in a `MetricsEditMap` persisted to `~/.hpcassist`
+- **Path access control** — `readonly_paths` and `data_paths` globs enforced at every filesystem write; driven from `agent.toml`
+
+```mermaid
+graph LR
+    AT["agent.toml"] -->|config| AG["PGOAAgent"]
+    AG -->|reason| DP["DSPy\nChainOfThought"]
+    DP -->|edit prompt| ED["EditDispatcher\nopencode run"]
+    ED -->|git diff| ER["EditRecord"]
+    AG -->|profile| AD["Adapters\nSlurm · NCU · LIKWID"]
+    AD -->|ProfileBundle| AN["analyze_bottlenecks"]
+    AN -->|BottleneckReport| DP
+    AG -->|compare| DR["DeltaReport"]
+    DR --> EM["MetricsEditMap\n(audit trail)"]
+```
 
 ## Prototype Commands
 
 After installing the backend package, these commands are the primary operator
 entry points:
 
+- `hpc-assistant-backend assist --repo <path>`
 - `hpc-assistant-backend doctor`
 - `hpc-assistant-backend discover-cluster`
 - `hpc-assistant-backend discover-env`
@@ -65,6 +76,7 @@ Edit `.env` to set at least:
 Start with the read-only checks:
 
 ```bash
+hpc-assistant-backend assist --repo .
 make prototype-doctor
 make prototype-cluster
 make prototype-env
@@ -84,9 +96,10 @@ make tui-run
 
 Hotkeys:
 
-- `1` doctor
-- `2` cluster
-- `3` environment
+- `1` assist
+- `2` doctor
+- `3` cluster
+- `4` environment
 - `r` refresh current panel
 - `q` quit
 
@@ -97,6 +110,8 @@ The prototype is conservative by default:
 - filesystem writes are limited to configured roots
 - cluster probe jobs are disabled unless explicitly enabled
 - OpenCode remains an add-on tool surface, not the core orchestration layer
+- repo inspection, editing, and command execution should remain in OpenCode's native flow
+- Slurm submission and cancellation should stay behind backend approvals
 - the experimental PGOA loop does not submit or cancel jobs on its own
 
 ## Verification
@@ -104,5 +119,7 @@ The prototype is conservative by default:
 ```bash
 make test
 python3 -m py_compile backend/src/hpc_assistant_backend/*.py
+python3 -m py_compile backend/src/hpc_assistant_backend/assistant/*.py
 python3 -m py_compile backend/src/hpc_assistant_backend/pgoa/*.py
+cargo check --manifest-path tui/Cargo.toml
 ```

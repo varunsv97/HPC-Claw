@@ -102,7 +102,7 @@ def _format_cluster_section(profile: ClusterProfile | None) -> str:
     se = profile.software_env
     if se and se.module_system != "none":
         lines.append("")
-        ver_str = f" v{se.lmod_version}" if se.lmod_version else ""
+        ver_str = f" v{se.lmod_version}" if se.lmod_version else (f" v{se.tmod_version}" if se.tmod_version else "")
         spider_note = " (full hierarchy)" if se.spider_complete else " (Core tier only)"
         lines.append(f"Module system: {se.module_system}{ver_str}{spider_note}")
 

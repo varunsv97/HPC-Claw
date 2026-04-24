@@ -1,0 +1,46 @@
+# HPC Assistant — project configuration
+# Place this file at the root of your project (alongside your job scripts).
+# PGOA reads this at startup; OpenCode and the TypeScript bridge also read it.
+
+[project]
+# Short identifier used in store paths and experiment logs
+name = "my-hpc-project"
+# Path to the primary Slurm job script, relative to this file
+workload_script = "run.sh"
+
+[paths]
+# Glob patterns for write-protected files.
+# OpenCode and PGOA will never write files matching these patterns,
+# even if they are inside an allowed filesystem root.
+# Patterns are matched against: full absolute path, path relative to each
+# filesystem root, and each individual filename component.
+readonly = [
+  "agent.toml",
+  "Makefile",
+  "*.lock",
+]
+
+# Input data directories/files — read-only discovery.
+# PGOA may inspect these to understand workload inputs but will never write them.
+data = [
+  # "/scratch/data/input/",
+  # "~/datasets/",
+]
+
+# Source paths that OpenCode is allowed to edit when applying code-level
+# optimizations.  Paths are relative to the project root (this file's directory).
+edit_roots = [
+  "src/",
+]
+
+[pgoa]
+# KPI to minimize (or maximize if lower_is_better = false)
+primary_kpi   = "wall_time_s"
+kpi_unit      = "seconds"
+lower_is_better = true
+
+# Stop when KPI improvement per iteration falls below this threshold (percent)
+kpi_threshold_pct = 2.0
+
+# Maximum number of optimize→profile→compare cycles before giving up
+max_iterations = 5

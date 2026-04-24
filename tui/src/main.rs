@@ -1,4 +1,3 @@
-use std::env;
 use std::io::{self, Stdout};
 use std::process::Command;
 use std::time::Duration;
@@ -23,11 +22,15 @@ use ratatui::Terminal;
 struct Args {
     #[arg(long, env = "HPC_ASSISTANT_BACKEND_COMMAND", default_value = "hpc-assistant-backend")]
     backend_command: String,
+    #[arg(long, env = "HPC_ASSISTANT_REPO_ROOT", default_value = ".")]
+    repo_root: String,
+    #[arg(long, env = "HPC_ASSISTANT_GOAL")]
+    goal: Option<String>,
 }
 
 struct Panel {
     title: &'static str,
-    subcommand: &'static str,
+    argv: Vec<String>,
     body: String,
     status: String,
 }
@@ -39,26 +42,42 @@ struct App {
 }
 
 impl App {
-    fn new(backend_command: String) -> Self {
+    fn new(backend_command: String, repo_root: String, goal: Option<String>) -> Self {
+        let mut assist_argv = vec![
+            String::from("assist"),
+            String::from("--repo"),
+            repo_root,
+        ];
+        if let Some(goal) = goal {
+            assist_argv.push(String::from("--goal"));
+            assist_argv.push(goal);
+        }
+
         Self {
             backend_command,
             selected: 0,
             panels: vec![
                 Panel {
+                    title: "Assist",
+                    argv: assist_argv,
+                    body: String::from("Press r to initialize the repo-aware assistant session."),
+                    status: String::from("idle"),
+                },
+                Panel {
                     title: "Doctor",
-                    subcommand: "doctor",
+                    argv: vec![String::from("doctor")],
                     body: String::from("Press r to load the doctor report."),
                     status: String::from("idle"),
                 },
                 Panel {
                     title: "Cluster",
-                    subcommand: "discover-cluster",
+                    argv: vec![String::from("discover-cluster")],
                     body: String::from("Press r to discover cluster topology."),
                     status: String::from("idle"),
                 },
                 Panel {
                     title: "Environment",
-                    subcommand: "discover-env",
+                    argv: vec![String::from("discover-env")],
                     body: String::from("Press r to inspect the module environment."),
                     status: String::from("idle"),
                 },
@@ -68,32 +87,34 @@ impl App {
 
     fn refresh_current(&mut self) {
         if let Some(panel) = self.panels.get_mut(self.selected) {
-            panel.status = format!("running {}", panel.subcommand);
-            match run_backend_command(&self.backend_command, panel.subcommand) {
+            let label = panel.argv.join(" ");
+            panel.status = format!("running {label}");
+            match run_backend_command(&self.backend_command, &panel.argv) {
                 Ok(output) => {
                     panel.body = prettify_json(&output);
-                    panel.status = format!("completed {}", panel.subcommand);
+                    panel.status = format!("completed {label}");
                 }
                 Err(error) => {
                     panel.body = format!("backend command failed:\n\n{error:#}");
-                    panel.status = format!("failed {}", panel.subcommand);
+                    panel.status = format!("failed {label}");
                 }
             }
         }
     }
 }
 
-fn run_backend_command(backend_command: &str, subcommand: &str) -> Result<String> {
+fn run_backend_command(backend_command: &str, argv: &[String]) -> Result<String> {
     let output = Command::new(backend_command)
-        .arg(subcommand)
+        .args(argv)
         .output()
         .with_context(|| format!("failed to start backend command `{backend_command}`"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
+        let joined = argv.join(" ");
         anyhow::bail!(
-            "`{backend_command} {subcommand}` exited with {}.\nstdout:\n{}\nstderr:\n{}",
+            "`{backend_command} {joined}` exited with {}.\nstdout:\n{}\nstderr:\n{}",
             output.status,
             stdout.trim(),
             stderr.trim(),
@@ -128,7 +149,10 @@ fn restore_terminal(mut terminal: Terminal<CrosstermBackend<Stdout>>) -> Result<
 fn main() -> Result<()> {
     let args = Args::parse();
     let mut terminal = setup_terminal()?;
-    let result = run_app(&mut terminal, App::new(args.backend_command));
+    let result = run_app(
+        &mut terminal,
+        App::new(args.backend_command, args.repo_root, args.goal),
+    );
     restore_terminal(terminal)?;
     result
 }
@@ -176,7 +200,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, mut app: App) -> R
             frame.render_widget(body, layout[2]);
 
             let footer = Paragraph::new(Line::from(vec![
-                "1/2/3".bold(),
+                "1/2/3/4".bold(),
                 " switch view  ".into(),
                 "r".bold(),
                 " refresh  ".into(),
@@ -196,6 +220,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, mut app: App) -> R
                     KeyCode::Char('1') => app.selected = 0,
                     KeyCode::Char('2') => app.selected = 1,
                     KeyCode::Char('3') => app.selected = 2,
+                    KeyCode::Char('4') => app.selected = 3,
                     KeyCode::Char('r') => app.refresh_current(),
                     _ => {}
                 }

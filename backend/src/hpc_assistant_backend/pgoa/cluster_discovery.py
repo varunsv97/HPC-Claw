@@ -189,7 +189,7 @@ def collect_login_node_info(settings: AssistantSettings) -> ClusterProfile:
     """Phase 1: collect everything reachable from the login node without jobs."""
 
     # Cluster name from scontrol ping (best effort)
-    cluster_name = _detect_cluster_name(settings)
+    cluster_name = detect_cluster_name(settings)
 
     # Local hardware from /sys + hwloc + nvidia-smi
     login_hw = collect_hardware_info(settings)
@@ -228,7 +228,7 @@ def collect_login_node_info(settings: AssistantSettings) -> ClusterProfile:
     )
 
 
-def _detect_cluster_name(settings: AssistantSettings) -> str:
+def detect_cluster_name(settings: AssistantSettings) -> str:
     """Return the Slurm cluster name, or 'unknown' on failure."""
     try:
         r = subprocess.run(

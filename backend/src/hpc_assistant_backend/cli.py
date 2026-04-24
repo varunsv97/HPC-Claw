@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from .assistant.service import build_assistant_session
 from .config import load_settings
 from .guardrails import build_doctor_report, require_cluster_probe_permission
 from .openai_client import build_openai_client
@@ -33,6 +34,31 @@ def build_parser() -> argparse.ArgumentParser:
         "--root",
         type=Path,
         help="Override the project root. Defaults to the repository root.",
+    )
+    assist_parser = subcommands.add_parser(
+        "assist",
+        help="Describe and persist a repo-aware HPC assistant session without replacing OpenCode's editing flow.",
+    )
+    assist_parser.add_argument(
+        "--repo",
+        type=Path,
+        default=Path.cwd(),
+        help="Path to the working repository. Defaults to the current directory.",
+    )
+    assist_parser.add_argument(
+        "--goal",
+        help="Optional user goal for the current coding or optimization session.",
+    )
+    assist_parser.add_argument(
+        "--mode",
+        choices=("coding", "pgoa"),
+        default="coding",
+        help="Primary assistant mode. 'pgoa' keeps optimization as a skill inside the same session.",
+    )
+    assist_parser.add_argument(
+        "--sync-opencode",
+        action="store_true",
+        help="Write repo-local OpenCode config and tool shims before persisting the session.",
     )
 
     discover_cluster_parser = subcommands.add_parser(
@@ -118,9 +144,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     settings = load_settings()
-    store = ExperimentStore(Path(settings.pgoa_store_path).expanduser())
 
     if command == "discover-cluster":
+        store = ExperimentStore(Path(settings.pgoa_store_path).expanduser())
         profile = discover_cluster(
             settings,
             store,
@@ -135,6 +161,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if command == "probe-cluster":
+        store = ExperimentStore(Path(settings.pgoa_store_path).expanduser())
         try:
             require_cluster_probe_permission(
                 settings,
@@ -158,7 +185,19 @@ def main(argv: list[str] | None = None) -> int:
         _print_json(build_doctor_report(settings))
         return 0
 
+    if command == "assist":
+        session = build_assistant_session(
+            settings,
+            repo_root=str(args.repo),
+            goal=args.goal,
+            mode=args.mode,
+            sync_opencode=bool(args.sync_opencode),
+        )
+        _print_json(session)
+        return 0
+
     if command == "run-pgoa":
+        store = ExperimentStore(Path(settings.pgoa_store_path).expanduser())
         client = build_openai_client(settings)
         probe_callback = None
         if args.allow_probe_jobs or settings.allow_cluster_probe_jobs:
