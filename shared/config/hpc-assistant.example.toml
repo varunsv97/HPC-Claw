@@ -1,4 +1,4 @@
-# Legacy reference file for the first cluster-testing prototype.
+# HPC Claw — legacy reference file for the first cluster-testing prototype.
 #
 # The current backend reads environment variables through `AssistantSettings`
 # rather than parsing this file directly. Keep this file as operator-facing

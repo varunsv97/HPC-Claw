@@ -1,0 +1,206 @@
+/* HPC Claw TUI stylesheet */
+
+/* ── App shell ──────────────────────────────────────────────────────────── */
+Screen {
+    background: $surface;
+}
+
+Header {
+    background: $primary;
+    color: $text;
+    height: 1;
+    dock: top;
+}
+
+Footer {
+    background: $primary-darken-2;
+    color: $text-muted;
+    height: 1;
+    dock: bottom;
+}
+
+/* ── Sidebar navigation ─────────────────────────────────────────────────── */
+#sidebar {
+    width: 22;
+    background: $surface-darken-1;
+    border-right: solid $primary;
+    padding: 0 1;
+}
+
+#sidebar-title {
+    text-align: center;
+    color: $accent;
+    text-style: bold;
+    padding: 1 0;
+}
+
+#nav-list > ListItem {
+    padding: 0 1;
+    color: $text-muted;
+}
+
+#nav-list > ListItem.--highlight {
+    background: $primary;
+    color: $text;
+}
+
+#nav-list > ListItem:hover {
+    color: $text;
+}
+
+/* ── Content area ───────────────────────────────────────────────────────── */
+#content {
+    padding: 1 2;
+}
+
+/* ── Dashboard ──────────────────────────────────────────────────────────── */
+#dashboard-grid {
+    grid-size: 2;
+    grid-rows: auto 1fr;
+    grid-gutter: 1;
+    height: 100%;
+}
+
+.stat-card {
+    background: $surface-darken-1;
+    border: round $primary;
+    padding: 1 2;
+    height: 7;
+}
+
+.stat-label {
+    color: $text-muted;
+    text-style: italic;
+}
+
+.stat-value {
+    color: $accent;
+    text-style: bold;
+    text-align: center;
+}
+
+#recent-activity {
+    border: round $primary;
+    background: $surface-darken-1;
+    padding: 1 1;
+    height: 100%;
+    column-span: 2;
+}
+
+#activity-log {
+    height: 1fr;
+    overflow-y: auto;
+}
+
+/* ── Workloads ──────────────────────────────────────────────────────────── */
+#workload-container {
+    layout: horizontal;
+    height: 100%;
+}
+
+#workload-list-pane {
+    width: 30;
+    border-right: solid $primary;
+    padding: 0 1;
+}
+
+#workload-detail-pane {
+    padding: 0 1;
+    width: 1fr;
+    overflow-y: auto;
+}
+
+.pane-title {
+    color: $accent;
+    text-style: bold;
+    padding: 0 0 1 0;
+    border-bottom: solid $primary-darken-2;
+}
+
+#runs-table {
+    height: auto;
+    margin-top: 1;
+}
+
+.kpi-improved {
+    color: $success;
+}
+.kpi-degraded {
+    color: $error;
+}
+.kpi-neutral {
+    color: $text-muted;
+}
+
+/* ── Edit Audit ─────────────────────────────────────────────────────────── */
+#audit-container {
+    layout: vertical;
+    height: 100%;
+}
+
+#edits-table {
+    height: 14;
+    border: round $primary;
+}
+
+#diff-viewer {
+    height: 1fr;
+    border: round $primary;
+    background: $surface-darken-2;
+    margin-top: 1;
+    overflow: auto;
+}
+
+#diff-content {
+    padding: 1;
+}
+
+/* ── Settings ───────────────────────────────────────────────────────────── */
+#settings-form {
+    padding: 1 2;
+    layout: vertical;
+}
+
+.settings-section-title {
+    color: $accent;
+    text-style: bold;
+    margin-top: 1;
+    border-bottom: solid $primary-darken-2;
+}
+
+.setting-row {
+    layout: horizontal;
+    height: 3;
+    align: left middle;
+    margin-bottom: 1;
+}
+
+.setting-label {
+    width: 30;
+    color: $text-muted;
+}
+
+/* ── Cluster Panel ──────────────────────────────────────────────────────── */
+#cluster-tree {
+    border: round $primary;
+    height: 1fr;
+    margin-top: 1;
+}
+
+/* ── Shared ─────────────────────────────────────────────────────────────── */
+.section-title {
+    color: $accent;
+    text-style: bold;
+    padding: 0 0 1 0;
+}
+
+.empty-hint {
+    color: $text-muted;
+    text-style: italic;
+    text-align: center;
+    padding: 2 0;
+}
+
+.error-text {
+    color: $error;
+}

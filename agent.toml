@@ -1,4 +1,4 @@
-# HPC Assistant — project configuration
+# HPC Claw — project configuration
 # Place this file at the root of your project (alongside your job scripts).
 # PGOA reads this at startup; OpenCode and the TypeScript bridge also read it.
 

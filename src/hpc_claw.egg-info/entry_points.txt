@@ -1,0 +1,3 @@
+[console_scripts]
+hpc-claw = claw_backend.cli:main
+hpc-claw-tui = claw_tui.__main__:main

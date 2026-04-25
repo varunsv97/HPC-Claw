@@ -1,8 +1,8 @@
-# HPC Assistant — Architecture Reference
+# HPC Claw — Architecture Reference
 
 ## Overview
 
-`hpc-assistant` is a cluster-side AI optimization harness that drives a closed feedback loop over HPC workloads:
+HPC Claw is a cluster-side AI optimization harness that drives a closed feedback loop over HPC workloads:
 
 1. **Profile** a job using real Slurm telemetry, Nsight Compute, or LIKWID.
 2. **Analyse** the profile to classify the primary bottleneck.

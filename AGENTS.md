@@ -1,4 +1,4 @@
-# HPC Assistant
+# HPC Claw
 
 > Full architecture and component reference: [docs/architecture.md](docs/architecture.md)
 
@@ -60,12 +60,19 @@ python -c "from hpc_assistant_backend.pgoa.agent.loop import PGOAAgent; print('o
 | File | Purpose |
 |------|---------|
 | [`agent.toml`](agent.toml) | Per-project config (readonly paths, edit roots, PGOA settings) |
-| [`backend/src/hpc_assistant_backend/config.py`](backend/src/hpc_assistant_backend/config.py) | Runtime settings (env vars) |
-| [`backend/src/hpc_assistant_backend/project_config.py`](backend/src/hpc_assistant_backend/project_config.py) | agent.toml loader |
-| [`backend/src/hpc_assistant_backend/pgoa/schema.py`](backend/src/hpc_assistant_backend/pgoa/schema.py) | All Pydantic models |
-| [`backend/src/hpc_assistant_backend/pgoa/store.py`](backend/src/hpc_assistant_backend/pgoa/store.py) | Filesystem store |
-| [`backend/src/hpc_assistant_backend/pgoa/analysis.py`](backend/src/hpc_assistant_backend/pgoa/analysis.py) | Pure bottleneck classifier |
-| [`backend/src/hpc_assistant_backend/pgoa/dspy_prompts.py`](backend/src/hpc_assistant_backend/pgoa/dspy_prompts.py) | DSPy signatures |
-| [`backend/src/hpc_assistant_backend/pgoa/edit_dispatcher.py`](backend/src/hpc_assistant_backend/pgoa/edit_dispatcher.py) | OpenCode subprocess + git diff |
-| [`backend/src/hpc_assistant_backend/pgoa/agent/loop.py`](backend/src/hpc_assistant_backend/pgoa/agent/loop.py) | PGOAAgent orchestrator |
+| [`src/claw_backend/config.py`](src/claw_backend/config.py) | Runtime settings (`HPC_ASSISTANT_*` env vars) |
+| [`src/claw_backend/project_config.py`](src/claw_backend/project_config.py) | agent.toml loader |
+| [`src/claw_backend/pgoa/schema.py`](src/claw_backend/pgoa/schema.py) | All Pydantic models |
+| [`src/claw_backend/pgoa/store.py`](src/claw_backend/pgoa/store.py) | Filesystem store (`~/.hpcassist/`) |
+| [`src/claw_backend/pgoa/analysis.py`](src/claw_backend/pgoa/analysis.py) | Pure bottleneck classifier |
+| [`src/claw_backend/pgoa/dspy_prompts.py`](src/claw_backend/pgoa/dspy_prompts.py) | Optional DSPy signatures |
+| [`src/claw_backend/pgoa/edit_dispatcher.py`](src/claw_backend/pgoa/edit_dispatcher.py) | OpenCode subprocess + git diff |
+| [`src/claw_backend/pgoa/agent/loop.py`](src/claw_backend/pgoa/agent/loop.py) | PGOAAgent orchestrator |
+| [`src/claw_tui/app.py`](src/claw_tui/app.py) | Textual `ClawTUI(App)` — navigation + key bindings |
+| [`src/claw_tui/screens/dashboard.py`](src/claw_tui/screens/dashboard.py) | TUI Dashboard (store stats, recent activity) |
+| [`src/claw_tui/screens/workloads.py`](src/claw_tui/screens/workloads.py) | TUI Workloads browser (runs table + bottleneck detail) |
+| [`src/claw_tui/screens/audit.py`](src/claw_tui/screens/audit.py) | TUI Edit Audit (edit trail + diff viewer) |
+| [`src/claw_tui/screens/cluster.py`](src/claw_tui/screens/cluster.py) | TUI Cluster Profile viewer |
+| [`src/claw_tui/screens/settings.py`](src/claw_tui/screens/settings.py) | TUI Settings viewer (active env vars) |
+| [`src/claw_tui/app.tcss`](src/claw_tui/app.tcss) | Textual CSS for all TUI screens |
 | [`.opencode/tools/_python.ts`](.opencode/tools/_python.ts) | TypeScript→Python bridge for OpenCode plugins |
