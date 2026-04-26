@@ -126,9 +126,14 @@ graph TD
 
 ## PGOA Optimization Loop
 
+The loop is **fully autonomous** once `PGOAAgent.run()` is called — no operator interaction is required for job submission, polling, or profiling.
+
 ```mermaid
 flowchart TD
-    Start([Operator: submit baseline job]) --> CS[collect_slurm_profile\njob_id → SlurmMetrics]
+    Start([PGOAAgent.run]) --> CR0[create_run baseline]
+    CR0 --> SJ0[submit_job\nsbatch job_script → job_id]
+    SJ0 --> WJ0[wait_for_job\nsqueue poll → COMPLETED]
+    WJ0 --> CS[collect_slurm_profile\nsacct → SlurmMetrics]
     CS -->|optional| CN[collect_ncu_profile\nncu.csv → ComputeMetrics]
     CS -->|optional| CL[collect_likwid_profile\nlikwid.txt → CPUPerfMetrics]
     CN --> AB[analyze_bottlenecks\nBottleneckReport]
@@ -141,14 +146,16 @@ flowchart TD
 
     D2 --> DED[dispatch_code_edit\nopencode run prompt]
     DED -->|git diff| ER[(save EditRecord\nto store)]
-    ER --> Resubmit
+    ER --> CR1
 
     PS --> ASA[apply_slurm_action\nwrite modified job script]
-    ASA --> Resubmit([Operator: resubmit job\nwith new script])
+    ASA --> CR1
 
-    Resubmit --> CS2[collect_slurm_profile\nnew job_id]
-    CS2 --> CR[compare_runs\nDeltaReport]
-    CR --> D3{DSPy\nMetricsDeltaEvaluation}
+    CR1[create_run iteration_N] --> SJ1[submit_job\nautonomous]
+    SJ1 --> WJ1[wait_for_job\nautonomous]
+    WJ1 --> CS2[collect_slurm_profile\nnew run]
+    CS2 --> COMP[compare_runs\nDeltaReport]
+    COMP --> D3{DSPy\nMetricsDeltaEvaluation}
 
     D3 -->|should_rollback = true| RB[rollback edit\nrevert to last good]
     RB --> AB
@@ -159,6 +166,43 @@ flowchart TD
     CHK -->|no, iterations left| AB
 
     D3 -->|next_hypothesis| AB
+```
+
+---
+
+## Textual TUI (`hclaw-tui`)
+
+The TUI is a standalone Textual application that connects directly to the `ExperimentStore` and the same service layer used by the agent.  It requires no server — it reads `~/.hpcassist/` and invokes Slurm CLI tools directly.
+
+| Key | Screen | Source | What it shows |
+|-----|--------|--------|---------------|
+| `1` | Dashboard | `screens/dashboard.py` | Per-workload stats cards + recent activity log |
+| `2` | Workloads | `screens/workloads.py` | Runs table per workload + bottleneck detail pane |
+| `3` | Edit Audit | `screens/audit.py` | Edit trail table + inline unified diff viewer |
+| `4` | Cluster | `screens/cluster.py` | Cached cluster profile (hardware + partitions + modules) |
+| `5` | Settings | `screens/settings.py` | Active `HPC_ASSISTANT_*` env vars (API key masked) |
+| `6` | Jobs | `screens/jobs.py` | Live `squeue` table with `scontrol` detail pane |
+| `7` | Explorer | `screens/explorer.py` | Directory tree rooted at `filesystem_roots[0]` + file viewer |
+| `8` | Chat | `screens/chat.py` | Conversational LLM interface (`openai_model`) |
+| `9` | Hardware/Env | `screens/hardware_env.py` | Two-pane: CPU/GPU topology (left) + software modules (right); `d` triggers discovery in-place |
+
+Key bindings shared across all screens: `r` refresh · `q` quit.
+
+```
+src/claw_tui/
+├── __main__.py        # entry point (hclaw-tui)
+├── app.py             # ClawTUI(App) — screen registry + key bindings
+├── app.tcss           # Textual CSS for all screens
+└── screens/
+    ├── dashboard.py
+    ├── workloads.py
+    ├── audit.py
+    ├── cluster.py
+    ├── settings.py
+    ├── jobs.py
+    ├── explorer.py
+    ├── chat.py
+    └── hardware_env.py
 ```
 
 ---
@@ -178,7 +222,11 @@ sequenceDiagram
     Op->>AG: run(workload_id, job_script, kpi)
     AG->>AG: reset _pending_edit, _edit_map
 
-    Note over AG: bottleneck detected in loop...
+    AG->>ST: create_run(baseline)
+    AG->>SL: submit_job(job_script_path) → job_id
+    AG->>SL: wait_for_job(job_id)
+
+    Note over AG: baseline job complete...
     AG->>DP: BottleneckToHypothesis(type, details, context)
     DP-->>AG: hypothesis, edit_needed=true, expected_pct
 

@@ -8,7 +8,7 @@
 - `pydantic-settings` for all runtime config (`AssistantSettings`, `HPC_ASSISTANT_*` env prefix)
 - Stdlib `tomllib` for TOML parsing — no third-party TOML library
 - `from __future__ import annotations` in every module
-- DSPy (`>=3.0`) is optional: import it inside `try/except`, guard Signature class bodies with `if _DSPY_AVAILABLE:`
+- DSPy (`>=2.6.0`) is optional: import it inside `try/except`, guard Signature class bodies with `if _DSPY_AVAILABLE:`
 
 ## Architecture
 
@@ -34,14 +34,14 @@ All Pydantic models live in `pgoa/schema.py`.  One change per optimization itera
 ```bash
 # Install (from repo root)
 python3 -m venv .venv && . .venv/bin/activate
-pip install -e backend            # installs hpc_assistant_backend + all deps
-pip install pytest                # for running the test suite
+pip install -e src             # installs hclaw (claw_backend + claw_tui) + all deps
+pip install pytest             # for running the test suite
 
 # Run tests
-cd backend && python -m pytest tests/ -q
+cd src && python -m pytest tests/ -q
 
 # Smoke-test imports (no network required)
-python -c "from hpc_assistant_backend.pgoa.agent.loop import PGOAAgent; print('ok')"
+python -c "from claw_backend.pgoa.agent.loop import PGOAAgent; print('ok')"
 ```
 
 ## Conventions
@@ -54,6 +54,7 @@ python -c "from hpc_assistant_backend.pgoa.agent.loop import PGOAAgent; print('o
 - **DSPy modules** are lazily instantiated in `get_modules()` — do not instantiate `ChainOfThought` / `Predict` at import time; they require a configured LM.
 - **Agent.toml** is the operator-facing config surface.  Do not add new HPC-project-level settings to `AssistantSettings`; put them in `ProjectPathsConfig` or `PGOAProjectConfig` instead.
 - **Test fixtures** are in `tests/pgoa/fixtures/` — add fixture files there when a new adapter needs sample output.
+- **Job submission** (`submit_job`) and polling (`wait_for_job`) live in `pgoa/services.py`. The PGOA loop calls them autonomously — no user interaction is required after `PGOAAgent.run()` is invoked.
 
 ## Key Files
 
@@ -74,5 +75,9 @@ python -c "from hpc_assistant_backend.pgoa.agent.loop import PGOAAgent; print('o
 | [`src/claw_tui/screens/audit.py`](src/claw_tui/screens/audit.py) | TUI Edit Audit (edit trail + diff viewer) |
 | [`src/claw_tui/screens/cluster.py`](src/claw_tui/screens/cluster.py) | TUI Cluster Profile viewer |
 | [`src/claw_tui/screens/settings.py`](src/claw_tui/screens/settings.py) | TUI Settings viewer (active env vars) |
+| [`src/claw_tui/screens/jobs.py`](src/claw_tui/screens/jobs.py) | TUI Jobs — live squeue table + scontrol detail pane |
+| [`src/claw_tui/screens/explorer.py`](src/claw_tui/screens/explorer.py) | TUI Explorer — directory tree + file viewer |
+| [`src/claw_tui/screens/chat.py`](src/claw_tui/screens/chat.py) | TUI Chat — conversational LLM interface |
+| [`src/claw_tui/screens/hardware_env.py`](src/claw_tui/screens/hardware_env.py) | TUI Hardware/Env — CPU/GPU topology + software modules |
 | [`src/claw_tui/app.tcss`](src/claw_tui/app.tcss) | Textual CSS for all TUI screens |
 | [`.opencode/tools/_python.ts`](.opencode/tools/_python.ts) | TypeScript→Python bridge for OpenCode plugins |

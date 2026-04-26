@@ -12,6 +12,80 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "create_run",
+            "description": (
+                "Create a new experiment run entry in the store and return its run_id. "
+                "You MUST call this before any collect_*_profile call to obtain a valid run_id. "
+                "Use run_type='baseline' for the first (unmodified) run, "
+                "run_type='iteration' for all subsequent optimization runs."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "workload_id": {"type": "string"},
+                    "run_type": {
+                        "type": "string",
+                        "enum": ["baseline", "iteration"],
+                        "description": "'baseline' for the first run; 'iteration' for post-edit runs.",
+                    },
+                    "iteration": {
+                        "type": "integer",
+                        "description": "Iteration number (omit for baseline; auto-assigned when omitted for iteration runs).",
+                    },
+                },
+                "required": ["workload_id", "run_type"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "submit_job",
+            "description": (
+                "Submit a Slurm job script via sbatch and return the numeric job_id. "
+                "Call this after create_run and after any apply_slurm_action that produced "
+                "a new script. The job_id returned must be passed to wait_for_job."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "job_script_path": {
+                        "type": "string",
+                        "description": "Absolute path to the job script to submit.",
+                    },
+                },
+                "required": ["job_script_path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "wait_for_job",
+            "description": (
+                "Block until the Slurm job leaves the queue (COMPLETED, FAILED, CANCELLED, etc.). "
+                "Returns the final job state string. Always call this before collect_slurm_profile."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "job_id": {"type": "integer", "description": "Slurm job ID to wait for."},
+                    "poll_interval_s": {
+                        "type": "number",
+                        "description": "Seconds between squeue polls (default 30).",
+                    },
+                    "timeout_s": {
+                        "type": "number",
+                        "description": "Maximum seconds to wait before raising an error (default 3600).",
+                    },
+                },
+                "required": ["job_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "collect_slurm_profile",
             "description": (
                 "Collect Slurm job telemetry (sacct + sstat) for a completed or running job."

@@ -26,37 +26,40 @@ graph LR
     DR --> EM["MetricsEditMap\n(audit trail)"]
 ```
 
-## Prototype Commands
+## Commands
 
-After installing the backend package, these commands are the primary operator
-entry points:
+After installing, these commands are the primary operator entry points:
 
-- `hpc-assistant-backend assist --repo <path>`
-- `hpc-assistant-backend doctor`
-- `hpc-assistant-backend discover-cluster`
-- `hpc-assistant-backend discover-env`
-- `hpc-assistant-backend probe-cluster --partition <name> --yes`
+```bash
+hclaw assist --repo <path>
+hclaw doctor
+hclaw discover-cluster
+hclaw discover-env
+hclaw probe-cluster --partition <name> --yes
+```
 
-OpenCode support is still available:
+OpenCode tool bridge:
 
-- `hpc-assistant-backend show-opencode-tools`
-- `hpc-assistant-backend sync-opencode-tools`
+```bash
+hclaw show-opencode-tools
+hclaw sync-opencode-tools
+```
+
+Textual TUI:
+
+```bash
+hclaw-tui [--store ~/.hpcassist] [--env-file .env]
+```
 
 ## Install
 
-Python backend:
-
 ```bash
+git clone https://github.com/varunsv97/hpc-claw.git
+cd hpc-claw
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e backend
-```
-
-Rust TUI:
-
-```bash
-cargo build --manifest-path tui/Cargo.toml
+python -m pip install -e src
 ```
 
 Environment example:
@@ -76,32 +79,39 @@ Edit `.env` to set at least:
 Start with the read-only checks:
 
 ```bash
-hpc-assistant-backend assist --repo .
-make prototype-doctor
-make prototype-cluster
-make prototype-env
+hclaw assist --repo .
+hclaw doctor
+hclaw discover-cluster
+hclaw discover-env
 ```
 
-If those look correct and you explicitly want compute-node topology, run:
+If those look correct and you explicitly want compute-node topology:
 
 ```bash
-PYTHONPATH=backend/src .venv/bin/python -m hpc_assistant_backend probe-cluster --partition <partition> --yes
+hclaw probe-cluster --partition <partition> --yes
 ```
 
-The Rust TUI is a thin wrapper over the same commands:
+Launch the TUI:
 
 ```bash
-make tui-run
+hclaw-tui
 ```
 
-Hotkeys:
+TUI hotkeys:
 
-- `1` assist
-- `2` doctor
-- `3` cluster
-- `4` environment
-- `r` refresh current panel
-- `q` quit
+| Key | Screen | Description |
+|-----|--------|-------------|
+| `1` | Dashboard | Store stats and recent activity |
+| `2` | Workloads | Runs table with bottleneck detail |
+| `3` | Edit Audit | Edit trail + inline diff viewer |
+| `4` | Cluster | Cluster profile viewer |
+| `5` | Settings | Active env vars |
+| `6` | Jobs | Live Slurm queue (`squeue`) with `scontrol` detail |
+| `7` | Explorer | Repo directory tree + file viewer |
+| `8` | Chat | Conversational interface with the configured LLM |
+| `9` | Hardware/Env | Full CPU/GPU topology + software modules |
+| `r` | — | Refresh current screen |
+| `q` | — | Quit |
 
 ## Guardrails
 
@@ -112,14 +122,15 @@ The prototype is conservative by default:
 - OpenCode remains an add-on tool surface, not the core orchestration layer
 - repo inspection, editing, and command execution should remain in OpenCode's native flow
 - Slurm submission and cancellation should stay behind backend approvals
-- the experimental PGOA loop does not submit or cancel jobs on its own
+- Slurm job submission (`sbatch`) via the PGOA loop requires `allow_cluster_probe_jobs=true`
+  or it is blocked by `guardrails.py`
 
 ## Verification
 
 ```bash
-make test
-python3 -m py_compile backend/src/hpc_assistant_backend/*.py
-python3 -m py_compile backend/src/hpc_assistant_backend/assistant/*.py
-python3 -m py_compile backend/src/hpc_assistant_backend/pgoa/*.py
-cargo check --manifest-path tui/Cargo.toml
+# from repo root
+source .venv/bin/activate
+python -m pytest src/tests/ -q        # → 144 passed
+python -c "from claw_backend.pgoa.agent.loop import PGOAAgent; print('ok')"
+hclaw doctor
 ```

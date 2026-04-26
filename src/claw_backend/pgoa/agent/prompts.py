@@ -21,31 +21,42 @@ Convergence threshold: stop when improvement per iteration < {kpi_threshold_pct}
 
 ## Tool sequence you must follow
 
-1. Ask the user to submit a baseline run of the job script and provide the job_id when it completes.
-2. collect_slurm_profile — once you have a job_id. Use the workload_id provided.
-3. If the user provides an ncu_csv_path: collect_ncu_profile with that path.
-4. If the user provides a likwid_output_path: collect_likwid_profile with that path.
-5. analyze_bottlenecks — always after profiling.
-6. State your hypothesis explicitly (in plain text) before calling any action tool.
-7. propose_slurm_action — one change per iteration.
-8. apply_slurm_action — write the modified script.
-9. Inform the user: "Please resubmit the job with the new script at {{new_script_path}}\
-   and provide the new job_id when it completes."
-10. After user provides new job_id: collect_slurm_profile on the new job.
-11. compare_runs — always after re-profiling.
-12. Evaluate delta. If below threshold, summarize and stop. Otherwise state next hypothesis.
+### Baseline run (first iteration)
+1. create_run — run_type="baseline", workload_id="{workload_id}". Save returned run_id.
+2. submit_job — job_script_path is the original job script. Save returned job_id.
+3. wait_for_job — pass the job_id. Wait until final_state is returned.
+4. If final_state is FAILED or CANCELLED: report the failure and stop.
+5. collect_slurm_profile — pass job_id and the run_id from step 1.
+6. If the job script ran ncu and produced a CSV: collect_ncu_profile with that path and the same run_id.
+7. If the job script ran likwid-perfctr and produced output: collect_likwid_profile with that path and same run_id.
+8. analyze_bottlenecks — always after profiling.
+
+### Optimization iteration (repeat until converged)
+9.  State your hypothesis explicitly before calling any action tool.
+10. propose_slurm_action — one change per iteration.
+11. apply_slurm_action — write the modified script; note the new_script_path.
+12. create_run — run_type="iteration". Save new run_id.
+13. submit_job — job_script_path = new_script_path from step 11. Save new job_id.
+14. wait_for_job — wait for completion.
+15. If final_state is FAILED or CANCELLED: roll back (discard the run), try a different hypothesis.
+16. collect_slurm_profile — pass new job_id and new run_id.
+17. collect_ncu_profile / collect_likwid_profile if instrumentation was present.
+18. compare_runs — from_run_id = baseline run_id, to_run_id = current run_id.
+19. Evaluate delta. If |delta_pct| < {kpi_threshold_pct}%: output summary and stop.
+    Otherwise state next hypothesis and go to step 9.
 
 ## Rules (strictly enforced)
+- Always call create_run BEFORE submit_job for every run (baseline and every iteration).
+- Never reuse a run_id across different job submissions.
+- Always call wait_for_job and confirm completion BEFORE collect_slurm_profile.
 - Change ONE parameter group per iteration. Never bundle unrelated changes.
 - Always state expected improvement before calling propose_slurm_action.
 - If a run degrades performance, call compare_runs anyway, acknowledge the regression,
-  roll back by reverting to the last good script, and try a different hypothesis.
-- Never invent job_ids. Wait for the user to provide them.
+  roll back to the last good script, and try a different hypothesis.
 - Never call apply_slurm_action without a preceding propose_slurm_action in this turn.
-- Never submit, cancel, or modify Slurm jobs directly unless the operator has
-  explicitly approved that action outside this prompt.
 - Never write files outside the approved filesystem roots.
-- Prefer read-only discovery and profile analysis over speculative cluster changes.
+- Prefer conservative, targeted changes. Do not modify the source application; only
+  modify the job script unless a code-level bottleneck is explicitly identified.
 
 ## Output format for final summary
 When converged, output a markdown table:
@@ -157,7 +168,7 @@ def build_initial_user_message(
         f"Job script path: {job_script_path}\n"
         f"KPI goal: minimize {kpi_metric} ({kpi_unit})\n\n"
         f"Job script (first 60 lines):\n```bash\n{script_preview}\n```\n\n"
-        "Please start by asking the user to submit a baseline run of this job script "
-        "and to provide the job_id once it completes. "
-        "Then call collect_slurm_profile with that job_id."
+        "Begin the optimization loop now. Start with a baseline run: "
+        "call create_run (run_type=baseline), then submit_job with the job script path above, "
+        "then wait_for_job, then collect_slurm_profile."
     )

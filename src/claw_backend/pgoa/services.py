@@ -6,6 +6,9 @@ tool surface and the agent tool registry use the same implementation.
 
 from __future__ import annotations
 
+import re
+import subprocess
+import time
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -233,6 +236,97 @@ def apply_binding_change(
     output_path.write_text(modified, encoding="utf-8")
     store.save_job_script(workload_id, run_id, modified)
     return str(output_path), changes
+
+
+_JOB_ID_RE = re.compile(r"Submitted batch job (\d+)")
+_SQUEUE_STATE_FORMAT = "%T"
+
+
+def submit_job(
+    settings: AssistantSettings,
+    *,
+    job_script_path: str,
+) -> int:
+    """Submit a Slurm job via sbatch and return the numeric job ID.
+
+    The job script path must be within the approved filesystem roots.
+    """
+    script = resolve_allowed_path(job_script_path, settings)
+    result = subprocess.run(
+        ["sbatch", str(script)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=settings.command_timeout_seconds,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"sbatch failed (exit {result.returncode}): {result.stderr.strip()}"
+        )
+    m = _JOB_ID_RE.search(result.stdout)
+    if not m:
+        raise RuntimeError(
+            f"Could not parse job ID from sbatch output: {result.stdout!r}"
+        )
+    return int(m.group(1))
+
+
+def wait_for_job(
+    settings: AssistantSettings,
+    *,
+    job_id: int,
+    poll_interval_s: float = 30.0,
+    timeout_s: float = 3600.0,
+) -> str:
+    """Block until job *job_id* leaves the Slurm queue; return final sacct state.
+
+    Raises :exc:`TimeoutError` if the job does not complete within *timeout_s*.
+    Returns the first state token from sacct (e.g. ``"COMPLETED"``, ``"FAILED"``).
+    """
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        result = subprocess.run(
+            [
+                "squeue",
+                "-j",
+                str(job_id),
+                "--noheader",
+                "-o",
+                _SQUEUE_STATE_FORMAT,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=settings.command_timeout_seconds,
+        )
+        state_line = result.stdout.strip()
+        if not state_line:
+            # Job no longer in the queue — finished (any terminal state)
+            break
+        time.sleep(poll_interval_s)
+    else:
+        raise TimeoutError(
+            f"Job {job_id} did not complete within {timeout_s:.0f}s"
+        )
+
+    # Retrieve final state from sacct (accounting DB, survives queue eviction)
+    sacct = subprocess.run(
+        [
+            "sacct",
+            "-j",
+            str(job_id),
+            "--noheader",
+            "--parsable2",
+            "--format=State",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=settings.command_timeout_seconds,
+    )
+    # sacct output has one line per job step; the first line is the main job
+    states = [ln.strip() for ln in sacct.stdout.splitlines() if ln.strip()]
+    return states[0] if states else "UNKNOWN"
 
 
 def compare_runs(

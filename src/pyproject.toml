@@ -15,8 +15,8 @@ dependencies = [
 ]
 
 [project.scripts]
-hpc-claw = "claw_backend.cli:main"
-hpc-claw-tui = "claw_tui.__main__:main"
+hclaw = "claw_backend.cli:main"
+hclaw-tui = "claw_tui.__main__:main"
 
 [project.optional-dependencies]
 dev = [

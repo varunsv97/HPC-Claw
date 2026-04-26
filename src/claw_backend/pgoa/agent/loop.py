@@ -40,6 +40,8 @@ from claw_backend.pgoa.services import (
     collect_slurm_profile,
     compare_runs,
     record_slurm_action,
+    submit_job,
+    wait_for_job,
 )
 from claw_backend.pgoa.store import ExperimentStore
 from claw_backend.project_config import ProjectConfig
@@ -248,8 +250,9 @@ class PGOAAgent:
                             f"[PGOA] Code edit dispatched (edit_id={edit_info.edit_id}). "
                             f"Hypothesis: {edit_info.hypothesis} "
                             f"Files modified: {', '.join(edit_info.files_modified) or 'pending git diff'}. "
-                            "Please ask the user to resubmit the job with the modified code "
-                            "and provide the new job_id when it completes."
+                            "Now create a new iteration run (create_run, run_type=iteration), "
+                            "submit the modified job (submit_job), wait for it to complete "
+                            "(wait_for_job), then collect the profile and compare runs."
                         ),
                     })
                 last_bottleneck_result = None
@@ -470,6 +473,32 @@ class PGOAAgent:
             return {"error": str(exc)}
 
     def _call_service(self, tool_name: str, args: dict) -> dict:
+        if tool_name == "create_run":
+            handle = self._store.create_run(
+                args["workload_id"],
+                args["run_type"],
+                iteration=args.get("iteration"),
+            )
+            return {
+                "run_id": handle.run_id,
+                "run_type": handle.run_type,
+                "workload_id": handle.workload_id,
+                "iteration": handle.iteration,
+            }
+        if tool_name == "submit_job":
+            job_id = submit_job(
+                self._settings,
+                job_script_path=args["job_script_path"],
+            )
+            return {"job_id": job_id}
+        if tool_name == "wait_for_job":
+            final_state = wait_for_job(
+                self._settings,
+                job_id=int(args["job_id"]),
+                poll_interval_s=float(args.get("poll_interval_s", 30.0)),
+                timeout_s=float(args.get("timeout_s", 3600.0)),
+            )
+            return {"job_id": args["job_id"], "final_state": final_state}
         if tool_name == "collect_slurm_profile":
             kpi = self._make_kpi(args)
             bundle = collect_slurm_profile(
