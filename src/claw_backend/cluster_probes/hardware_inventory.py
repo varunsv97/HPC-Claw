@@ -1,11 +1,11 @@
 """Cluster hardware discovery — login-node queries and optional probe jobs.
 
 Two phases:
-  1. Login-node discovery (always, no jobs needed):
+  1. Static cluster discovery (always, no jobs needed):
      - ``sinfo --Node --format=...``  → partition list + node counts
      - ``scontrol show node``         → first node in each partition (cpu/mem/gpu)
-     - ``hwloc-ls`` / ``/sys`` / ``/proc`` via the existing HardwareAdapter
-     - ``nvidia-smi`` if available
+     - ``hwloc-ls`` / ``/sys`` / ``/proc`` for login-node static topology
+     - ``nvidia-smi`` static device inventory if available
 
   2. Probe-job discovery (gated by caller-supplied approval callback):
      - Submits a tiny ``srun --pty ...`` (or batch job) on each target partition
@@ -13,15 +13,17 @@ Two phases:
        temp file.
      - Merges results into ClusterProfile.partitions[*].hardware.
 
-Results are saved to ``<store_base>/_cluster/<cluster_name>.json`` and reused
-across workloads on the same cluster.  A max-age guard forces re-discovery when
-the cached data is stale (default 7 days).
+Results are saved to ``<store_base>/_global/cluster_profiles/<cluster_name>.json``
+and reused across workloads on the same cluster.  A max-age guard forces
+re-discovery when the cached data is stale (default 7 days).
 """
 
 from __future__ import annotations
 
-import json
+import getpass
 import logging
+import os
+import platform
 import re
 import subprocess
 import tempfile
@@ -31,13 +33,252 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from claw_backend.config import AssistantSettings
-from claw_backend.pgoa.adapters.hardware import collect_hardware_info
-from claw_backend.pgoa.env_discovery import discover_software_env
+from claw_backend.cluster_probes.software import discover_software_env
 from claw_backend.pgoa.schema import ClusterProfile, HardwareInfo, PartitionInfo
+from claw_backend.utils.hardware_parsing import gpu_arch_from_cc, parse_hwloc_xml
 
 log = logging.getLogger(__name__)
 
 _CACHE_MAX_AGE_DAYS = 7
+
+
+def _sysfs_read(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+
+
+def _parse_cpu_range(value: str) -> int | None:
+    count = 0
+    try:
+        for part in value.split(","):
+            part = part.strip()
+            if "-" in part:
+                lo, hi = part.split("-", 1)
+                count += int(hi) - int(lo) + 1
+            elif part:
+                count += 1
+        return count if count > 0 else None
+    except (ValueError, AttributeError):
+        return None
+
+
+def _parse_cache_size_kb(size_str: str) -> int | None:
+    try:
+        value = size_str.strip().upper()
+        if value.endswith("K"):
+            return int(value[:-1])
+        if value.endswith("M"):
+            return int(value[:-1]) * 1024
+        if value.endswith("G"):
+            return int(value[:-1]) * 1024 * 1024
+        return int(value)
+    except (ValueError, AttributeError):
+        return None
+
+
+def _collect_cpu_topology(sysfs_root: Path) -> dict:
+    cpu_dir = sysfs_root / "devices" / "system" / "cpu"
+    possible_str = _sysfs_read(cpu_dir / "possible")
+    total_cpus = _parse_cpu_range(possible_str) if possible_str else None
+
+    socket_ids: set[int] = set()
+    core_per_socket: dict[int, set[int]] = {}
+    thread_per_core: dict[tuple[int, int], set[int]] = {}
+
+    for topo_dir in sorted(cpu_dir.glob("cpu[0-9]*/topology")):
+        try:
+            cpu_idx = int(topo_dir.parent.name[3:])
+        except ValueError:
+            continue
+        pkg_str = _sysfs_read(topo_dir / "physical_package_id")
+        core_str = _sysfs_read(topo_dir / "core_id")
+        if pkg_str is None or core_str is None:
+            continue
+        try:
+            socket_id, core_id = int(pkg_str), int(core_str)
+        except ValueError:
+            continue
+        socket_ids.add(socket_id)
+        core_per_socket.setdefault(socket_id, set()).add(core_id)
+        thread_per_core.setdefault((socket_id, core_id), set()).add(cpu_idx)
+
+    n_sockets = len(socket_ids) if socket_ids else None
+    cores_per_socket = (
+        max(len(cores) for cores in core_per_socket.values())
+        if core_per_socket
+        else None
+    )
+    threads_per_core = (
+        max(len(threads) for threads in thread_per_core.values())
+        if thread_per_core
+        else None
+    )
+    if total_cpus is None and n_sockets and cores_per_socket and threads_per_core:
+        total_cpus = n_sockets * cores_per_socket * threads_per_core
+
+    return {
+        "cpus_per_node": total_cpus,
+        "sockets_per_node": n_sockets,
+        "cores_per_socket": cores_per_socket,
+        "threads_per_core": threads_per_core,
+    }
+
+
+def _collect_cache_info(sysfs_root: Path) -> dict:
+    cache_dir = sysfs_root / "devices" / "system" / "cpu" / "cpu0" / "cache"
+    l1d_kb = l2_kb = l3_mb = None
+
+    for idx_dir in sorted(cache_dir.glob("index*")):
+        level = _sysfs_read(idx_dir / "level")
+        cache_type = _sysfs_read(idx_dir / "type")
+        size_str = _sysfs_read(idx_dir / "size")
+        if level is None or size_str is None:
+            continue
+        size_kb = _parse_cache_size_kb(size_str)
+        if size_kb is None:
+            continue
+        if level == "1" and cache_type == "Data":
+            l1d_kb = size_kb
+        elif level == "2":
+            l2_kb = size_kb
+        elif level == "3":
+            l3_mb = round(size_kb / 1024.0, 2)
+
+    return {"cache_l1d_kb": l1d_kb, "cache_l2_kb": l2_kb, "cache_l3_mb": l3_mb}
+
+
+def _collect_numa_info(sysfs_root: Path) -> dict:
+    node_dir = sysfs_root / "devices" / "system" / "node"
+    numa_dirs = sorted(node_dir.glob("node[0-9]*"))
+    n_numa = len(numa_dirs) if numa_dirs else None
+
+    total_mem_kb = 0.0
+    for node_path in numa_dirs:
+        meminfo = _sysfs_read(node_path / "meminfo")
+        if not meminfo:
+            continue
+        for line in meminfo.splitlines():
+            if "MemTotal" not in line:
+                continue
+            parts = line.split()
+            if len(parts) >= 4:
+                try:
+                    total_mem_kb += float(parts[3])
+                except ValueError:
+                    pass
+            break
+
+    mem_gb = round(total_mem_kb / (1024 ** 2), 1) if total_mem_kb else None
+    return {"numa_nodes": n_numa, "memory_gb_per_node": mem_gb}
+
+
+_HPC_FLAGS = frozenset({
+    "avx", "avx2",
+    "avx512f", "avx512cd", "avx512bw", "avx512vl", "avx512dq",
+    "sse4_1", "sse4_2", "fma",
+    "aes",
+    "sve",
+})
+
+
+def _collect_cpu_model(proc_root: Path) -> dict:
+    cpuinfo = _sysfs_read(proc_root / "cpuinfo")
+    if not cpuinfo:
+        return {}
+
+    model_name: str | None = None
+    features: list[str] | None = None
+
+    for line in cpuinfo.splitlines():
+        if ":" not in line:
+            continue
+        key, _, val = line.partition(":")
+        key = key.strip().lower()
+        val = val.strip()
+        if key == "model name" and model_name is None:
+            model_name = val
+        elif key in ("flags", "features") and features is None:
+            features = sorted(flag for flag in val.split() if flag in _HPC_FLAGS)
+        if model_name and features is not None:
+            break
+
+    return {"cpu_model": model_name, "cpu_features": features or []}
+
+
+def _run_hwloc(settings: AssistantSettings) -> str | None:
+    for cmd in (
+        ["hwloc-ls", "--of", "xml", "--no-io"],
+        ["lstopo", "--of", "xml", "--no-io"],
+    ):
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=settings.command_timeout_seconds,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            continue
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout
+    return None
+
+
+def _query_static_gpus(settings: AssistantSettings) -> list[dict] | None:
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.total,compute_cap,multi_processor_count",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=settings.command_timeout_seconds,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+
+    gpus: list[dict] = []
+    for line in result.stdout.splitlines():
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) < 4:
+            continue
+        try:
+            mem_mib = float(parts[1])
+        except ValueError:
+            mem_mib = 0.0
+        try:
+            sm_count = int(parts[3])
+        except ValueError:
+            sm_count = None
+        gpus.append({
+            "name": parts[0],
+            "memory_gb": round(mem_mib / 1024.0, 1),
+            "compute_capability": parts[2],
+            "sm_count": sm_count,
+        })
+    return gpus or None
+
+
+def _summarize_static_gpus(gpus: list[dict]) -> dict:
+    first = gpus[0]
+    compute_capability = first["compute_capability"]
+    return {
+        "gpus_per_node": len(gpus),
+        "gpu_model": first["name"],
+        "gpu_memory_gb": first["memory_gb"],
+        "gpu_sm_count": first["sm_count"],
+        "gpu_compute_capability": compute_capability,
+        "gpu_arch": gpu_arch_from_cc(compute_capability),
+    }
 
 # ---------------------------------------------------------------------------
 # sinfo helpers
@@ -182,17 +423,50 @@ def _parse_scontrol_node(raw: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Login-node discovery
+# Static cluster discovery
 # ---------------------------------------------------------------------------
 
+def collect_static_hardware_info(
+    settings: AssistantSettings,
+    *,
+    sysfs_root: Path = Path("/sys"),
+    proc_root: Path = Path("/proc"),
+) -> HardwareInfo:
+    """Collect static login-node hardware without runtime utilization fields."""
+    info: dict = {"cpu_arch": platform.machine()}
+
+    for label, fn, args in (
+        ("sysfs cpu topology", _collect_cpu_topology, (sysfs_root,)),
+        ("sysfs cache info", _collect_cache_info, (sysfs_root,)),
+        ("sysfs NUMA info", _collect_numa_info, (sysfs_root,)),
+        ("/proc/cpuinfo", _collect_cpu_model, (proc_root,)),
+    ):
+        try:
+            info.update(fn(*args))
+        except Exception:
+            log.debug("%s unavailable", label, exc_info=True)
+
+    hwloc_xml = _run_hwloc(settings)
+    if hwloc_xml:
+        for key, value in parse_hwloc_xml(hwloc_xml).items():
+            if info.get(key) is None:
+                info[key] = value
+
+    gpus = _query_static_gpus(settings)
+    if gpus:
+        info.update(_summarize_static_gpus(gpus))
+
+    return HardwareInfo(**{k: v for k, v in info.items() if v is not None})
+
+
 def collect_login_node_info(settings: AssistantSettings) -> ClusterProfile:
-    """Phase 1: collect everything reachable from the login node without jobs."""
+    """Phase 1: collect static cluster hardware/config without workload metrics."""
 
     # Cluster name from scontrol ping (best effort)
     cluster_name = detect_cluster_name(settings)
 
-    # Local hardware from /sys + hwloc + nvidia-smi
-    login_hw = collect_hardware_info(settings)
+    # Static local hardware from /sys + hwloc + nvidia-smi inventory.
+    login_hw = collect_static_hardware_info(settings)
 
     # Partition list from sinfo
     raw_sinfo = _run_sinfo(settings)
@@ -275,6 +549,100 @@ ApprovalCallback = Callable[[str], bool]
 """Called with a human-readable description; return True to allow."""
 
 
+def _parse_account_partition_relationship(raw: str) -> dict[str, set[str] | None]:
+    """Parse sacctmgr Account/Partition rows for one user.
+
+    Returns a mapping: account -> allowed partitions. A value of ``None`` means
+    the account is not restricted to explicit partitions.
+    """
+    relationships: dict[str, set[str] | None] = {}
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        account, _, partition_raw = line.partition("|")
+        account = account.strip()
+        if not account:
+            continue
+        partition_raw = partition_raw.strip()
+        # Empty/(null)/*/ALL indicates no explicit partition restriction.
+        if partition_raw in ("", "(null)", "*", "ALL"):
+            relationships[account] = None
+            continue
+        partitions = {
+            name.strip()
+            for name in partition_raw.split(",")
+            if name.strip() and name.strip() != "(null)"
+        }
+        previous = relationships.get(account)
+        if previous is None and account in relationships:
+            # Already unrestricted for this account.
+            continue
+        relationships[account] = (previous or set()) | partitions
+    return relationships
+
+
+def _account_partition_relationship(
+    settings: AssistantSettings,
+) -> dict[str, set[str] | None]:
+    """Best-effort query of Slurm account-to-partition associations."""
+    user = getpass.getuser()
+    try:
+        r = subprocess.run(
+            [
+                "sacctmgr",
+                "-nP",
+                "show",
+                "assoc",
+                f"user={user}",
+                "format=Account,Partition",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=settings.command_timeout_seconds,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        log.debug("Could not query account/partition associations: %s", exc)
+        return {}
+    if r.returncode != 0:
+        stderr = r.stderr.strip()
+        if stderr:
+            log.debug("sacctmgr assoc query failed: %s", stderr)
+        return {}
+    return _parse_account_partition_relationship(r.stdout)
+
+
+def _resolve_probe_partitions(
+    *,
+    requested: set[str] | None,
+    available: set[str],
+    relationships: dict[str, set[str] | None],
+) -> set[str]:
+    """Return partitions eligible for probe jobs after account filtering."""
+    candidates = requested if requested is not None else set(available)
+    if not relationships:
+        return candidates
+
+    active_account = (
+        os.environ.get("SLURM_ACCOUNT", "").strip()
+        or os.environ.get("SBATCH_ACCOUNT", "").strip()
+        or None
+    )
+
+    if active_account and active_account in relationships:
+        allowed_for_active = relationships[active_account]
+        if allowed_for_active is None:
+            return candidates
+        return candidates & allowed_for_active
+
+    if any(parts is None for parts in relationships.values()):
+        return candidates
+
+    allowed_union = set().union(*(parts for parts in relationships.values() if parts))
+    return candidates & allowed_union if allowed_union else candidates
+
+
 def run_probe_jobs(
     profile: ClusterProfile,
     settings: AssistantSettings,
@@ -292,11 +660,24 @@ def run_probe_jobs(
     *approval_callback* is called once per partition with a description string.
     If it returns False (or is None), the partition is skipped silently.
     """
-    target_names = set(partitions) if partitions else None
+    requested = set(partitions) if partitions else None
+    available = {part.name for part in profile.partitions}
+    relationships = _account_partition_relationship(settings)
+    target_names = _resolve_probe_partitions(
+        requested=requested,
+        available=available,
+        relationships=relationships,
+    )
+    skipped_for_access = (requested or available) - target_names
+    if skipped_for_access:
+        log.info(
+            "Skipping probe jobs on partitions not allowed for current account mapping: %s",
+            ", ".join(sorted(skipped_for_access)),
+        )
     updated = list(profile.partitions)
 
     for i, part in enumerate(updated):
-        if target_names and part.name not in target_names:
+        if part.name not in target_names:
             continue
         if part.hardware_from_probe:
             log.debug("Partition %s already has probe data, skipping", part.name)
@@ -407,17 +788,12 @@ def _cancel_job(job_id: str, settings: AssistantSettings) -> None:
 
 def _parse_probe_output(text: str) -> HardwareInfo:
     """Extract HardwareInfo from the probe script output."""
-    from claw_backend.pgoa.adapters.hardware import (
-        _parse_hwloc_xml,
-        _gpu_arch_from_cc,
-    )
-
     info: dict = {}
 
     # hwloc XML block
     xml_m = _HWLOC_XML_RE.search(text)
     if xml_m:
-        info.update(_parse_hwloc_xml(xml_m.group(1)))
+        info.update(parse_hwloc_xml(xml_m.group(1)))
 
     # nvidia-smi section
     smi_section = _extract_section(text, "=== nvidia-smi ===")
@@ -440,16 +816,7 @@ def _parse_probe_output(text: str) -> HardwareInfo:
             except (ValueError, IndexError):
                 continue
         if gpus:
-            first = gpus[0]
-            cc = first["compute_capability"]
-            info.update({
-                "gpus_per_node": len(gpus),
-                "gpu_model": first["name"],
-                "gpu_memory_gb": first["memory_gb"],
-                "gpu_sm_count": first["sm_count"],
-                "gpu_compute_capability": cc,
-                "gpu_arch": _gpu_arch_from_cc(cc),
-            })
+            info.update(_summarize_static_gpus(gpus))
 
     # lscpu section (fallback if hwloc unavailable)
     lscpu_section = _extract_section(text, "=== lscpu ===")

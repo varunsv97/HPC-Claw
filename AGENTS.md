@@ -49,6 +49,7 @@ python -c "from claw_backend.pgoa.agent.loop import PGOAAgent; print('ok')"
 - **Schema changes** always go in `pgoa/schema.py`. Never define Pydantic models elsewhere.
 - **New profiling adapters** inherit from `pgoa/adapters/base.py::BaseAdapter` and return a `ProfileBundle`.
 - **Service functions** (tool implementations) live in `pgoa/services.py`, not in the agent loop.  Both the agent and the OpenCode tool bridge call the same service layer.
+- **Cluster probes** live in `src/claw_backend/cluster_probes/`.  Keep software-environment discovery in `software.py`; derive module tiers from module commands and preserve the full load context instead of hardcoding module names.
 - **Atomic writes** — use `ExperimentStore._atomic_write(path, content)` for any persistent state.  Never write directly with `path.write_text()` outside the store.
 - **Path access control** — always resolve paths through `path_access.resolve_allowed_path()` or `resolve_writable_path()` before reading or writing user-supplied paths.
 - **DSPy modules** are lazily instantiated in `get_modules()` — do not instantiate `ChainOfThought` / `Predict` at import time; they require a configured LM.

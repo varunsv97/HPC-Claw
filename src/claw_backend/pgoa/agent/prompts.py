@@ -116,6 +116,12 @@ def _format_cluster_section(profile: ClusterProfile | None) -> str:
         ver_str = f" v{se.lmod_version}" if se.lmod_version else (f" v{se.tmod_version}" if se.tmod_version else "")
         spider_note = " (full hierarchy)" if se.spider_complete else " (Core tier only)"
         lines.append(f"Module system: {se.module_system}{ver_str}{spider_note}")
+        extra_contexts = [c for c in se.module_contexts if c.name != "active"]
+        if extra_contexts:
+            context_text = ", ".join(c.name for c in extra_contexts[:8])
+            if len(extra_contexts) > 8:
+                context_text += f", +{len(extra_contexts) - 8} more"
+            lines.append(f"Module contexts: {context_text}")
 
         if se.compilers:
             lines.append("Compilers:     " + ", ".join(_best_spec(m) for m in se.compilers))

@@ -10,8 +10,8 @@ from .guardrails import build_doctor_report, require_cluster_probe_permission
 from .openai_client import build_openai_client
 from .opencode_tools import sync_opencode_project, tool_manifest  # noqa: F401
 from .pgoa.agent.loop import PGOAAgent
-from .pgoa.cluster_discovery import run_probe_jobs
-from .pgoa.env_discovery import discover_software_env
+from .cluster_probes.hardware_inventory import run_probe_jobs
+from .cluster_probes.software import discover_software_env
 from .pgoa.services import discover_cluster
 from .pgoa.store import ExperimentStore
 
@@ -205,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
         agent = PGOAAgent(
             store=store,
             llm_client=client,
-            model=args.model or settings.openai_model,
+            model=args.model or settings.provider_model,
             max_iterations=(
                 args.max_iterations if args.max_iterations is not None else 5
             ),

@@ -1,4 +1,4 @@
-"""Tests for the HardwareAdapter and its /sys, hwloc, and nvidia-smi collectors."""
+"""Tests for cluster hardware inventory and runtime hardware metrics."""
 
 from __future__ import annotations
 
@@ -8,19 +8,25 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from claw_backend.config import AssistantSettings
-from claw_backend.pgoa.adapters.hardware import (
-    HardwareAdapter,
+from claw_backend.utils.hardware_parsing import gpu_arch_from_cc as _gpu_arch_from_cc
+from claw_backend.utils.hardware_parsing import parse_hwloc_xml as _parse_hwloc_xml
+from claw_backend.cluster_probes.hardware_inventory import (
     _collect_cache_info,
     _collect_cpu_model,
     _collect_cpu_topology,
     _collect_numa_info,
-    _gpu_arch_from_cc,
     _parse_cache_size_kb,
     _parse_cpu_range,
-    _parse_hwloc_xml,
-    _run_nvidia_smi,
-    collect_hardware_info,
+    _query_static_gpus,
+    collect_static_hardware_info,
+)
+from claw_backend.config import AssistantSettings
+from claw_backend.pgoa.adapters.runtime_hardware import (
+    RuntimeHardwareAdapter,
+    _collect_cpu_pressure,
+    _collect_loadavg,
+    _collect_memory_available,
+    collect_runtime_hardware_metrics,
 )
 from claw_backend.pgoa.schema import KPIMetrics
 
@@ -295,7 +301,7 @@ class TestParseHwlocXml(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
-class TestRunNvidiaSmi(unittest.TestCase):
+class TestQueryNvidiaSmi(unittest.TestCase):
     def _make_result(self) -> subprocess.CompletedProcess:
         content = (FIXTURES / "nvidia_smi_output.txt").read_text()
         return subprocess.CompletedProcess(args=[], returncode=0, stdout=content, stderr="")
@@ -304,7 +310,7 @@ class TestRunNvidiaSmi(unittest.TestCase):
         s = _settings()
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = self._make_result()
-            gpus = _run_nvidia_smi(s)
+            gpus = _query_static_gpus(s)
 
         self.assertIsNotNone(gpus)
         self.assertEqual(len(gpus), 2)
@@ -316,7 +322,7 @@ class TestRunNvidiaSmi(unittest.TestCase):
     def test_nvidia_smi_not_found_returns_none(self):
         s = _settings()
         with patch("subprocess.run", side_effect=FileNotFoundError):
-            result = _run_nvidia_smi(s)
+            result = _query_static_gpus(s)
         self.assertIsNone(result)
 
     def test_nonzero_exit_returns_none(self):
@@ -325,17 +331,17 @@ class TestRunNvidiaSmi(unittest.TestCase):
             mock_run.return_value = subprocess.CompletedProcess(
                 args=[], returncode=6, stdout="", stderr="No devices found"
             )
-            result = _run_nvidia_smi(s)
+            result = _query_static_gpus(s)
         self.assertIsNone(result)
 
 
 # ---------------------------------------------------------------------------
-# Integration: collect_hardware_info and HardwareAdapter
+# Integration: static cluster collection and runtime hardware metrics
 # ---------------------------------------------------------------------------
 
 
-class TestCollectHardwareInfoIntegration(unittest.TestCase):
-    """Full collect_hardware_info with fake /sys, fake hwloc, and mocked nvidia-smi."""
+class TestCollectStaticHardwareInfoIntegration(unittest.TestCase):
+    """Full static collection with fake /sys, fake hwloc, and mocked nvidia-smi."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -393,13 +399,13 @@ class TestCollectHardwareInfoIntegration(unittest.TestCase):
         s = _settings()
 
         with patch(
-            "claw_backend.pgoa.adapters.hardware._run_hwloc",
+            "claw_backend.cluster_probes.hardware_inventory._run_hwloc",
             return_value=None,
         ), patch(
-            "claw_backend.pgoa.adapters.hardware._run_nvidia_smi",
+            "claw_backend.cluster_probes.hardware_inventory._query_static_gpus",
             return_value=None,
         ):
-            hw = collect_hardware_info(s, sysfs_root=sysfs, proc_root=proc)
+            hw = collect_static_hardware_info(s, sysfs_root=sysfs, proc_root=proc)
 
         self.assertEqual(hw.sockets_per_node, 2)
         self.assertEqual(hw.cores_per_socket, 2)
@@ -425,13 +431,13 @@ class TestCollectHardwareInfoIntegration(unittest.TestCase):
              "compute_capability": "8.0", "sm_count": 108},
         ]
         with patch(
-            "claw_backend.pgoa.adapters.hardware._run_hwloc",
+            "claw_backend.cluster_probes.hardware_inventory._run_hwloc",
             return_value=None,
         ), patch(
-            "claw_backend.pgoa.adapters.hardware._run_nvidia_smi",
+            "claw_backend.cluster_probes.hardware_inventory._query_static_gpus",
             return_value=fake_gpus,
         ):
-            hw = collect_hardware_info(s, sysfs_root=sysfs, proc_root=proc)
+            hw = collect_static_hardware_info(s, sysfs_root=sysfs, proc_root=proc)
 
         self.assertEqual(hw.gpus_per_node, 2)
         self.assertEqual(hw.gpu_model, "NVIDIA A100 80GB PCIe")
@@ -447,13 +453,13 @@ class TestCollectHardwareInfoIntegration(unittest.TestCase):
         hwloc_xml = (FIXTURES / "hwloc_output.xml").read_text()
 
         with patch(
-            "claw_backend.pgoa.adapters.hardware._run_hwloc",
+            "claw_backend.cluster_probes.hardware_inventory._run_hwloc",
             return_value=hwloc_xml,
         ), patch(
-            "claw_backend.pgoa.adapters.hardware._run_nvidia_smi",
+            "claw_backend.cluster_probes.hardware_inventory._query_static_gpus",
             return_value=None,
         ):
-            hw = collect_hardware_info(s, sysfs_root=empty_sys, proc_root=proc)
+            hw = collect_static_hardware_info(s, sysfs_root=empty_sys, proc_root=proc)
 
         self.assertEqual(hw.sockets_per_node, 2)
         self.assertEqual(hw.cpus_per_node, 8)
@@ -467,20 +473,20 @@ class TestCollectHardwareInfoIntegration(unittest.TestCase):
         hwloc_xml = (FIXTURES / "hwloc_output.xml").read_text()
 
         with patch(
-            "claw_backend.pgoa.adapters.hardware._run_hwloc",
+            "claw_backend.cluster_probes.hardware_inventory._run_hwloc",
             return_value=hwloc_xml,
         ), patch(
-            "claw_backend.pgoa.adapters.hardware._run_nvidia_smi",
+            "claw_backend.cluster_probes.hardware_inventory._query_static_gpus",
             return_value=None,
         ):
-            hw = collect_hardware_info(s, sysfs_root=sysfs, proc_root=proc)
+            hw = collect_static_hardware_info(s, sysfs_root=sysfs, proc_root=proc)
 
         # /sys says 8 CPUs (matches hwloc too here), sockets=2, cores_per_socket=2
         self.assertEqual(hw.cpus_per_node, 8)
         self.assertEqual(hw.sockets_per_node, 2)
 
 
-class TestHardwareAdapter(unittest.TestCase):
+class TestRuntimeHardwareAdapter(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self._root = Path(self._tmp.name)
@@ -490,25 +496,92 @@ class TestHardwareAdapter(unittest.TestCase):
 
     def test_adapter_returns_bundle_with_hardware(self):
         s = _settings()
-        adapter = HardwareAdapter(settings=s)
+        adapter = RuntimeHardwareAdapter(settings=s)
         kpi = KPIMetrics(primary_metric="elapsed_s", value=100.0, unit="seconds")
 
         with patch(
-            "claw_backend.pgoa.adapters.hardware._run_hwloc",
-            return_value=None,
-        ), patch(
-            "claw_backend.pgoa.adapters.hardware._run_nvidia_smi",
+            "claw_backend.pgoa.adapters.runtime_hardware._run_nvidia_smi",
             return_value=None,
         ):
-            bundle = adapter.collect(
-                kpi,
-                sysfs_root=self._root / "sys",
-                proc_root=self._root / "proc",
-            )
+            bundle = adapter.collect(kpi)
 
         self.assertEqual(bundle.kpi.primary_metric, "elapsed_s")
         self.assertIsNotNone(bundle.hardware)
-        self.assertIsNotNone(bundle.hardware.cpu_arch)  # platform.machine() always works
+        self.assertIsNone(bundle.hardware.cpu_arch)
+
+    def test_adapter_collect_with_gpus(self):
+        s = _settings()
+        adapter = RuntimeHardwareAdapter(settings=s)
+        kpi = KPIMetrics(primary_metric="elapsed_s", value=100.0, unit="seconds")
+        fake_gpus = [{
+            "name": "NVIDIA A100 80GB PCIe",
+            "memory_gb": 80.0,
+            "compute_capability": "8.0",
+            "sm_count": 108,
+            "utilization_pct": 75.0,
+            "memory_used_gb": 40.0,
+        }]
+
+        with patch(
+            "claw_backend.pgoa.adapters.runtime_hardware._run_nvidia_smi",
+            return_value=fake_gpus,
+        ):
+            bundle = adapter.collect(kpi)
+
+        self.assertEqual(bundle.hardware.visible_gpus, 1)
+        self.assertEqual(bundle.hardware.gpu_utilization_pct, 75.0)
+        self.assertEqual(bundle.hardware.gpu_memory_used_gb, 40.0)
 
     def test_adapter_name(self):
-        self.assertEqual(HardwareAdapter().name(), "hardware")
+        self.assertEqual(RuntimeHardwareAdapter().name(), "runtime_hardware")
+
+
+class TestCollectRuntimeHwInfo(unittest.TestCase):
+    def test_no_gpus_returns_arch_only(self):
+        s = _settings()
+        with patch(
+            "claw_backend.pgoa.adapters.runtime_hardware._run_nvidia_smi",
+            return_value=None,
+        ):
+            hw = collect_runtime_hardware_metrics(s)
+        self.assertIsNone(hw.cpu_arch)
+        self.assertIsNone(hw.gpus_per_node)
+        self.assertIsNone(hw.gpu_model)
+        # static topology fields must NOT be populated
+        self.assertIsNone(hw.cores_per_socket)
+        self.assertIsNone(hw.cache_l1d_kb)
+        self.assertIsNone(hw.numa_nodes)
+
+    def test_gpus_populated(self):
+        s = _settings()
+        fake_gpus = [{
+            "name": "NVIDIA H100",
+            "memory_gb": 80.0,
+            "compute_capability": "9.0",
+            "sm_count": 132,
+            "utilization_pct": 50.0,
+            "memory_used_gb": 20.0,
+        }]
+        with patch(
+            "claw_backend.pgoa.adapters.runtime_hardware._run_nvidia_smi",
+            return_value=fake_gpus,
+        ):
+            hw = collect_runtime_hardware_metrics(s)
+        self.assertEqual(hw.visible_gpus, 1)
+        self.assertEqual(hw.gpu_utilization_pct, 50.0)
+        self.assertEqual(hw.gpu_memory_used_gb, 20.0)
+        self.assertAlmostEqual(hw.gpu_memory_utilization_pct, 25.0)
+
+    def test_linux_proc_runtime_fields(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc = Path(tmpdir)
+            _write(proc / "loadavg", "2.50 1.00 0.50 1/100 12345\n")
+            _write(proc / "meminfo", "MemAvailable:       10485760 kB\n")
+            _write(
+                proc / "pressure" / "cpu",
+                "some avg10=12.50 avg60=3.00 avg300=1.00 total=10\n",
+            )
+
+            self.assertEqual(_collect_loadavg(proc)["loadavg_1m"], 2.5)
+            self.assertEqual(_collect_memory_available(proc)["memory_available_gb"], 10.0)
+            self.assertEqual(_collect_cpu_pressure(proc)["cpu_pressure_avg10"], 12.5)

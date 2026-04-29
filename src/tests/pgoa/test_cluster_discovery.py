@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from claw_backend.pgoa.cluster_discovery import (
+from claw_backend.cluster_probes.hardware_inventory import (
+    _account_partition_relationship,
     _first_node_name,
+    _parse_account_partition_relationship,
     _parse_probe_output,
     _parse_scontrol_node,
     _parse_sinfo,
+    _resolve_probe_partitions,
 )
+from claw_backend.config import AssistantSettings
 
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -63,6 +68,57 @@ class ClusterDiscoveryHelperTests(unittest.TestCase):
         self.assertEqual(hw.gpu_arch, "Ampere")
         self.assertEqual(hw.threads_per_core, 2)
         self.assertIsNotNone(hw.cpus_per_node)
+
+    def test_parse_account_partition_relationship(self):
+        raw = (
+            "projA|cpu,gpu\n"
+            "projA|debug\n"
+            "projB|(null)\n"
+            "projC|*\n"
+        )
+        relationships = _parse_account_partition_relationship(raw)
+        self.assertEqual(relationships["projA"], {"cpu", "gpu", "debug"})
+        self.assertIsNone(relationships["projB"])
+        self.assertIsNone(relationships["projC"])
+
+    @patch("claw_backend.cluster_probes.hardware_inventory.subprocess.run")
+    def test_account_partition_relationship_query(self, mock_run):
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = "projA|cpu,gpu\nprojB|(null)\n"
+        mock_run.return_value.stderr = ""
+        settings = AssistantSettings(command_timeout_seconds=5.0)
+
+        relationships = _account_partition_relationship(settings)
+
+        self.assertEqual(relationships["projA"], {"cpu", "gpu"})
+        self.assertIsNone(relationships["projB"])
+
+    @patch.dict("os.environ", {"SLURM_ACCOUNT": "projA"}, clear=False)
+    def test_resolve_probe_partitions_uses_active_account(self):
+        result = _resolve_probe_partitions(
+            requested=None,
+            available={"cpu", "gpu", "debug"},
+            relationships={"projA": {"cpu", "gpu"}, "projB": {"debug"}},
+        )
+        self.assertEqual(result, {"cpu", "gpu"})
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_resolve_probe_partitions_without_active_account_uses_union(self):
+        result = _resolve_probe_partitions(
+            requested={"cpu", "debug"},
+            available={"cpu", "gpu", "debug"},
+            relationships={"projA": {"cpu"}, "projB": {"debug"}},
+        )
+        self.assertEqual(result, {"cpu", "debug"})
+
+    @patch.dict("os.environ", {"SLURM_ACCOUNT": "projA"}, clear=False)
+    def test_resolve_probe_partitions_unrestricted_active_account(self):
+        result = _resolve_probe_partitions(
+            requested={"cpu", "gpu"},
+            available={"cpu", "gpu", "debug"},
+            relationships={"projA": None},
+        )
+        self.assertEqual(result, {"cpu", "gpu"})
 
 
 if __name__ == "__main__":

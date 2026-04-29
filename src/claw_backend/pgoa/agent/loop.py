@@ -13,7 +13,7 @@ from claw_backend.pgoa.agent.prompts import (
     build_system_prompt,
 )
 from claw_backend.pgoa.agent.tools import TOOL_SCHEMAS
-from claw_backend.pgoa.cluster_discovery import (
+from claw_backend.cluster_probes.hardware_inventory import (
     collect_login_node_info,
     is_stale,
     run_probe_jobs,

@@ -203,11 +203,13 @@ class ExperimentStore:
         )
 
     # ------------------------------------------------------------------
-    # Cluster profile (shared across workloads, keyed by cluster name)
+    # Global cluster profile (shared across workloads, keyed by cluster name)
     # ------------------------------------------------------------------
 
     def load_cluster_profile(self, cluster_name: str) -> ClusterProfile | None:
         path = self._cluster_path(cluster_name)
+        if not path.exists():
+            path = self._legacy_cluster_path(cluster_name)
         if not path.exists():
             return None
         try:
@@ -222,7 +224,10 @@ class ExperimentStore:
         _atomic_write(path, profile.model_dump_json(indent=2))
 
     def _cluster_path(self, cluster_name: str) -> Path:
-        # Sanitise cluster name to a safe filename
+        safe = re.sub(r"[^\w\-.]", "_", cluster_name)
+        return self._base / "_global" / "cluster_profiles" / f"{safe}.json"
+
+    def _legacy_cluster_path(self, cluster_name: str) -> Path:
         safe = re.sub(r"[^\w\-.]", "_", cluster_name)
         return self._base / "_cluster" / f"{safe}.json"
 
@@ -273,11 +278,6 @@ class ExperimentStore:
         except Exception:
             log.warning("Failed to load edit map for %s", workload_id, exc_info=True)
             return None
-
-    def _cluster_path(self, cluster_name: str) -> Path:
-        # Sanitise cluster name to a safe filename
-        safe = re.sub(r"[^\w\-.]", "_", cluster_name)
-        return self._base / "_cluster" / f"{safe}.json"
 
     # ------------------------------------------------------------------
     # Internal helpers

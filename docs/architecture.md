@@ -10,6 +10,8 @@ HPC Claw is a cluster-side AI optimization harness that drives a closed feedback
 4. **Edit** code via the OpenCode CLI (spawned as a subprocess) or apply a Slurm binding change.
 5. **Measure** the delta between before/after runs, evaluate the hypothesis, and either iterate or converge.
 
+The cluster-probe layer also records the module environment, including gated tiers that only appear after loading selector, compiler, or partition modules.
+
 All edits and their resulting metric deltas are stored in a per-workload audit trail (`MetricsEditMap`), giving operators a reproducible record of every change and its measured effect.
 
 ---
@@ -60,6 +62,11 @@ graph TD
         ED -->|git diff| GIT["git"]
     end
 
+    subgraph "Cluster Probes"
+        CI["cluster_probes/hardware_inventory.py\ncluster name, login hardware, partitions"]
+        CS["cluster_probes/software.py\nmodule system detection, recursive module tiers,\nmodule metadata capture"]
+    end
+
     subgraph "Services"
         SV["pgoa/services.py\nanalyze_run, compare_runs\ncollect_*_profile, apply_binding_change"]
     end
@@ -73,7 +80,7 @@ graph TD
         SA["adapters/slurm.py\nSlurmAdapter\nsacct + sstat"]
         NA["adapters/ncu.py\nNCUAdapter\nNsight Compute CSV"]
         LA["adapters/likwid.py\nLIKWIDAdapter\nlikwid-perfctr"]
-        HA["adapters/hardware.py\nHardwareAdapter\nhwloc + nvidia-smi"]
+        HA["adapters/runtime_hardware.py\nRuntimeHardwareAdapter\n/proc pressure + nvidia-smi utilization"]
         BA --> SA
         BA --> NA
         BA --> LA
@@ -82,7 +89,7 @@ graph TD
 
     subgraph "Storage"
         ST["pgoa/store.py\nExperimentStore\n(atomic-write filesystem)"]
-        FS["~/.hpcassist/\n<workload_id>/\n  baseline/\n  iteration_NNN/\n  edits/\n  edit_map.json\n  cluster_<name>.json"]
+        FS["~/.hpcassist/\n<workload_id>/\n  baseline/\n  iteration_NNN/\n  edits/\n  edit_map.json\n_global/cluster_profiles/<name>.json"]
         ST --> FS
     end
 
@@ -115,7 +122,10 @@ graph TD
     SV -->|calls| AN
     SV -->|calls| PA
 
+    CI -->|calls| CS
+
     SA & NA & LA & HA -->|return| SC
+    CS -->|returns| SC
     AN -->|consumes| SC
     AN -->|returns| SC
     ED -->|returns| SC
@@ -184,7 +194,7 @@ The TUI is a standalone Textual application that connects directly to the `Exper
 | `6` | Jobs | `screens/jobs.py` | Live `squeue` table with `scontrol` detail pane |
 | `7` | Explorer | `screens/explorer.py` | Directory tree rooted at `filesystem_roots[0]` + file viewer |
 | `8` | Chat | `screens/chat.py` | Conversational LLM interface (`openai_model`) |
-| `9` | Hardware/Env | `screens/hardware_env.py` | Two-pane: CPU/GPU topology (left) + software modules (right); `d` triggers discovery in-place |
+| `9` | Hardware/Env | `screens/hardware_env.py` | Two-pane: CPU/GPU topology (left) + module tiers, metadata, and software modules (right); `d` triggers discovery in-place |
 
 Key bindings shared across all screens: `r` refresh · `q` quit.
 
@@ -373,7 +383,7 @@ erDiagram
 graph LR
     Base["~/.hpcassist/\n(pgoa_store_path)"]
 
-    Base --> CL["cluster_<name>.json\nClusterProfile cache\n(stale after 24h)"]
+    Base --> CL["_global/cluster_profiles/<name>.json\nClusterProfile cache\n(stale after 7 days)"]
 
     Base --> WL["<workload_id>/"]
     WL --> BL["baseline/\n  run_id.txt\n  profile.json\n  job_script.sh"]
@@ -465,7 +475,7 @@ store.load_edit_record(workload_id, edit_id)         # → EditRecord | None
 store.list_edit_records(workload_id)                 # → list[EditRecord]
 store.save_edit_map(workload_id, edit_map)           # edit_map.json (replaces)
 store.load_edit_map(workload_id)                     # → MetricsEditMap | None
-store.save_cluster_profile(profile)                  # cluster_<name>.json
+store.save_cluster_profile(profile)                  # _global/cluster_profiles/<name>.json
 store.load_cluster_profile(cluster_name)             # → ClusterProfile | None
 ```
 
@@ -504,7 +514,7 @@ Each adapter implements `BaseAdapter.collect(**kwargs) → ProfileBundle`.
 | `SlurmAdapter` | `sacct` + `sstat` | Wall time, CPU%, max RSS, exit code |
 | `NCUAdapter` | Nsight Compute `--csv` file | Roofline position, SM occupancy, memory bandwidth, top kernels |
 | `LIKWIDAdapter` | `likwid-perfctr` text output | DRAM bandwidth, FLOPS, IPC, cache bandwidth |
-| `HardwareAdapter` | `hwloc-ls`, `nvidia-smi` | CPU topology, GPU model, memory, SM count |
+| `RuntimeHardwareAdapter` | `/proc`, `nvidia-smi` | Load, CPU pressure, available memory, GPU utilization and memory use |
 
 All raw output is stored in `ProfileBundle.raw_sources` keyed by adapter name for auditability.
 

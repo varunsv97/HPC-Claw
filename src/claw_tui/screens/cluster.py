@@ -28,7 +28,7 @@ class ClusterScreen(Screen):
         self.action_refresh()
 
     def action_refresh(self) -> None:
-        from claw_backend.pgoa.cluster_discovery import detect_cluster_name
+        from claw_backend.cluster_probes.hardware_inventory import detect_cluster_name
 
         log = self.query_one("#cluster-detail", RichLog)
         log.clear()
@@ -77,11 +77,18 @@ class ClusterScreen(Screen):
             env = profile.software_env
             log.write("")
             log.write(f"[bold]Software environment[/]  ({env.module_system})")
+            extra_contexts = [c for c in env.module_contexts if c.name != "active"]
+            if extra_contexts:
+                names = ", ".join(c.name for c in extra_contexts[:6])
+                extra = f" +{len(extra_contexts)-6} more" if len(extra_contexts) > 6 else ""
+                log.write(f"  [cyan]{'Module tiers':<14}[/] {names}{extra}")
             for label, mods in [
                 ("Compilers", env.compilers),
                 ("MPI", env.mpi_libraries),
                 ("GPU toolkits", env.gpu_toolkits),
                 ("Math libs", env.math_libraries),
+                ("Debuggers", env.debuggers),
+                ("Profilers", env.profilers),
             ]:
                 if mods:
                     names = ", ".join(m.name for m in mods[:8])

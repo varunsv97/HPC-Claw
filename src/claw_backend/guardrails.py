@@ -10,7 +10,7 @@ from typing import Any
 
 from claw_backend.config import AssistantSettings
 from claw_backend.path_access import configured_filesystem_roots
-from claw_backend.pgoa.env_discovery import detect_module_system
+from claw_backend.cluster_probes.software import detect_module_system
 
 _DISCOVERY_COMMANDS = (
     "sinfo",
@@ -38,7 +38,7 @@ def require_cluster_probe_permission(
         return
     raise PermissionError(
         "cluster probe jobs are disabled by default; pass --yes or set "
-        "HPC_ASSISTANT_ALLOW_CLUSTER_PROBE_JOBS=true to allow probe-job submission"
+        "HPC_CLAW_ALLOW_CLUSTER_PROBE_JOBS=true to allow probe-job submission"
     )
 
 
@@ -70,8 +70,8 @@ def build_doctor_report(settings: AssistantSettings) -> dict[str, Any]:
         },
         "settings": {
             "command_timeout_seconds": settings.command_timeout_seconds,
-            "openai_model": settings.openai_model,
-            "openai_configured": bool(settings.openai_api_key),
+            "provider_model": settings.provider_model,
+            "provider_configured": bool(settings.provider_api_key),
             "pgoa_store_path": str(store_path),
             "filesystem_roots": [str(path) for path in configured_filesystem_roots(settings)],
             "guardrails_enabled": settings.guardrails_enabled,

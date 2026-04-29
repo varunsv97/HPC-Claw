@@ -51,7 +51,7 @@ log = logging.getLogger(__name__)
 try:
     import dspy
     _DSPY_AVAILABLE = True
-except ImportError:
+except Exception:
     dspy = None  # type: ignore[assignment]
     _DSPY_AVAILABLE = False
 
@@ -240,14 +240,14 @@ def configure_dspy(settings: AssistantSettings) -> None:
             "Install it with: pip install 'dspy>=2.6.0'"
         )
     lm = dspy.LM(  # type: ignore[union-attr]
-        model=f"openai/{settings.openai_model}",
-        api_key=settings.openai_api_key or "",
-        base_url=settings.openai_base_url,
-        timeout=settings.openai_timeout_seconds,
+        model=f"openai/{settings.provider_model}",
+        api_key=settings.provider_api_key or "",
+        base_url=settings.provider_base_url,
+        timeout=settings.provider_timeout_seconds,
         cache=False,
     )
     dspy.configure(lm=lm)  # type: ignore[union-attr]
-    log.debug("DSPy configured with model=%s", settings.openai_model)
+    log.debug("DSPy configured with model=%s", settings.provider_model)
 
 
 def get_modules() -> tuple[Any, Any, Any]:

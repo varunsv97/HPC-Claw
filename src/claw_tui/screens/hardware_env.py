@@ -81,7 +81,7 @@ class HardwareEnvScreen(Screen):
         store = ExperimentStore(store_path)
 
         try:
-            from claw_backend.pgoa.cluster_discovery import detect_cluster_name
+            from claw_backend.cluster_probes.hardware_inventory import detect_cluster_name
             cluster_name = detect_cluster_name(settings)
         except Exception as exc:
             hw_log.write(f"[red]Cannot detect cluster: {exc}[/red]")
@@ -154,6 +154,13 @@ class HardwareEnvScreen(Screen):
             env_log.write(f"  TCL     {se.tmod_version}")
         spider_note = "full hierarchy" if se.spider_complete else "Core tier only"
         env_log.write(f"  Scope   {spider_note}")
+        extra_contexts = [c for c in se.module_contexts if c.name != "active"]
+        if extra_contexts:
+            env_log.write(f"  Contexts {len(extra_contexts)} gated module tiers")
+            for ctx in extra_contexts[:6]:
+                env_log.write(f"    [cyan]{ctx.name}[/cyan]  {len(ctx.modules)} modules")
+            if len(extra_contexts) > 6:
+                env_log.write(f"    [dim]… and {len(extra_contexts) - 6} more[/dim]")
 
         sections = [
             ("Compilers",   se.compilers),

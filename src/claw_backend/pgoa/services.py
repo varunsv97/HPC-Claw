@@ -22,7 +22,7 @@ from claw_backend.pgoa.adapters.likwid import LIKWIDAdapter
 from claw_backend.pgoa.adapters.ncu import NCUAdapter
 from claw_backend.pgoa.adapters.slurm import SlurmAdapter
 from claw_backend.pgoa.analysis import analyze_bottlenecks
-from claw_backend.pgoa.cluster_discovery import (
+from claw_backend.cluster_probes.hardware_inventory import (
     collect_login_node_info,
     detect_cluster_name,
     is_stale,
@@ -49,7 +49,7 @@ def discover_cluster(
 
     Only performs login-node discovery (no probe jobs). Probe jobs require
     user approval and must be triggered explicitly via
-    ``cluster_discovery.run_probe_jobs()``.
+    ``cluster_probes.hardware_inventory.run_probe_jobs()``.
     """
     # Check cache first — collect_login_node_info runs sinfo + scontrol + module
     # avail/spider and is expensive; skip all of that when the cache is fresh.

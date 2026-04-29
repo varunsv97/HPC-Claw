@@ -39,6 +39,15 @@ class HardwareInfo(BaseModel):
     gpu_sm_count: int | None = None
     gpu_compute_capability: str | None = None  # "8.0", "9.0" …
 
+    # Runtime hardware pressure/utilization (PGOA samples per run)
+    visible_gpus: int | None = None
+    gpu_utilization_pct: float | None = None
+    gpu_memory_used_gb: float | None = None
+    gpu_memory_utilization_pct: float | None = None
+    loadavg_1m: float | None = None
+    cpu_pressure_avg10: float | None = None
+    memory_available_gb: float | None = None
+
 
 class KernelStat(BaseModel):
     name: str
@@ -184,6 +193,24 @@ class ModuleInfo(BaseModel):
     default_version: str | None = None
     # Convenience command using default (or newest) version
     load_cmd: str
+    # Ordered commands needed to load this module, including any selector module
+    # that exposes a gated MODULEPATH tier.
+    load_sequence: list[str] = []
+    # Discovery contexts where this module was visible.
+    source_contexts: list[str] = []
+    # MODULEPATH roots where this module appeared during discovery.
+    modulepaths: list[str] = []
+    # Best-effort metadata from module whatis/show output.
+    metadata: str | None = None
+
+
+class ModuleContext(BaseModel):
+    """A module visibility context, such as the login default or a gated tier."""
+    name: str
+    load_sequence: list[str] = []
+    modulepath: list[str] = []
+    modules: list[ModuleInfo] = []
+    discovered_by: Literal["active", "module_show"] = "active"
 
 
 class Toolchain(BaseModel):
@@ -210,6 +237,8 @@ class SoftwareEnvironment(BaseModel):
       gpu_toolkits     — cuda, rocm, hip, cudnn, …
       math_libraries   — mkl, openblas, fftw, scalapack, …
       io_libraries     — hdf5, netcdf, adios2, …
+      debuggers        — gdb, cuda-gdb, totalview, ddt, …
+      profilers        — ncu, nsight, hpctoolkit, scorep, likwid, …
       applications     — gromacs, openfoam, python, pytorch, …
       other_modules    — everything else
 
@@ -221,6 +250,8 @@ class SoftwareEnvironment(BaseModel):
     tmod_version: str | None = None
     # MODULEPATH entries at discovery time
     modulepath: list[str] = []
+    # Additional module visibility contexts discovered by loading selector modules.
+    module_contexts: list[ModuleContext] = []
     # True if module spider completed (full hierarchy); False = avail-only
     spider_complete: bool = False
 
@@ -230,6 +261,8 @@ class SoftwareEnvironment(BaseModel):
     gpu_toolkits: list[ModuleInfo] = []
     math_libraries: list[ModuleInfo] = []
     io_libraries: list[ModuleInfo] = []
+    debuggers: list[ModuleInfo] = []
+    profilers: list[ModuleInfo] = []
     applications: list[ModuleInfo] = []
     other_modules: list[ModuleInfo] = []
 
