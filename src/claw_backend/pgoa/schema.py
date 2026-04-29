@@ -216,15 +216,16 @@ class ModuleContext(BaseModel):
 class Toolchain(BaseModel):
     """A resolved compiler + optional MPI/GPU combination with a module load sequence.
 
-    Hierarchy: compiler → mpi → (cuda | rocm) → math
+    Hierarchy: compiler → mpi → accelerator → math
     load_sequence must be executed in order before building/running.
     """
-    name: str                      # human key, e.g. "gcc/13.1.0+openmpi/4.1.6"
-    compiler: str | None = None    # "gcc/13.1.0"
-    mpi: str | None = None         # "openmpi/4.1.6"
-    cuda: str | None = None        # "cuda/12.2"
-    rocm: str | None = None        # "rocm/5.7"
-    math: str | None = None        # "openblas/0.3.23" or "mkl/2023.2"
+    name: str
+    compiler: str | None = None
+    mpi: str | None = None
+    gpu: str | None = None
+    cuda: str | None = None
+    rocm: str | None = None
+    math: str | None = None
     load_sequence: list[str] = []  # ordered module load commands
 
 
@@ -232,14 +233,14 @@ class SoftwareEnvironment(BaseModel):
     """Software environment discovered from the active module system.
 
     Classification hierarchy:
-      compilers        — gcc, intel, nvhpc, aocc, llvm, …
-      mpi_libraries    — openmpi, intelmpi, mvapich2, …
-      gpu_toolkits     — cuda, rocm, hip, cudnn, …
-      math_libraries   — mkl, openblas, fftw, scalapack, …
-      io_libraries     — hdf5, netcdf, adios2, …
-      debuggers        — gdb, cuda-gdb, totalview, ddt, …
-      profilers        — ncu, nsight, hpctoolkit, scorep, likwid, …
-      applications     — gromacs, openfoam, python, pytorch, …
+      compilers        — compiler and compiler-toolchain modules
+      mpi_libraries    — MPI implementation modules
+      gpu_toolkits     — GPU and accelerator toolkit modules
+      math_libraries   — math, solver, BLAS/LAPACK/FFT-style modules
+      io_libraries     — scientific and parallel I/O modules
+      debuggers        — debugging tool modules
+      profilers        — profiling and tracing tool modules
+      applications     — application, framework, runtime, and interpreter modules
       other_modules    — everything else
 
     toolchains is a derived list of usable (compiler × mpi × gpu) combinations

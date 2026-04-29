@@ -6,14 +6,14 @@ Two sources of data, both best-effort:
                                   modules (may take 20–60 s on large clusters)
 
 Classification hierarchy stored in SoftwareEnvironment:
-  compilers     → gcc, intel, nvhpc, aocc, llvm, cce, …
-  mpi_libraries → openmpi, intelmpi, mvapich2, mpich, hpcx, …
-  gpu_toolkits  → cuda, rocm, hip, cudnn, …
-  math_libraries → mkl, openblas, fftw, scalapack, armpl, …
-  io_libraries  → hdf5, netcdf, adios2, pnetcdf, …
-  debuggers     → gdb, cuda-gdb, totalview, ddt, …
-  profilers     → ncu, nsight, hpctoolkit, likwid, …
-  applications  → gromacs, openfoam, python, pytorch, …
+  compilers     → compiler and compiler-toolchain modules
+  mpi_libraries → MPI implementation modules
+  gpu_toolkits  → GPU and accelerator toolkit modules
+  math_libraries → math, solver, BLAS/LAPACK/FFT-style modules
+  io_libraries  → scientific and parallel I/O modules
+  debuggers     → debugging tool modules
+  profilers     → profiling and tracing tool modules
+  applications  → application, framework, runtime, and interpreter modules
   other_modules → everything else
 
 Toolchain derivation:
@@ -738,12 +738,9 @@ def _derive_toolchains(
     # GPU standalone and compiler + GPU (top-3 compilers to avoid explosion)
     for g in gpu_toolkits:
         gs = _best_spec(g)
-        is_cuda = "cuda" in g.name.lower()
-        is_rocm = "rocm" in g.name.lower() or "hip" in g.name.lower()
         _add(Toolchain(
             name=gs,
-            cuda=gs if is_cuda else None,
-            rocm=gs if is_rocm else None,
+            gpu=gs,
             load_sequence=_load_sequence_for(g),
         ))
         for c in compilers[:3]:
@@ -751,8 +748,7 @@ def _derive_toolchains(
             _add(Toolchain(
                 name=f"{cs}+{gs}",
                 compiler=cs,
-                cuda=gs if is_cuda else None,
-                rocm=gs if is_rocm else None,
+                gpu=gs,
                 load_sequence=_merge_load_sequences(_load_sequence_for(c), _load_sequence_for(g)),
             ))
 
